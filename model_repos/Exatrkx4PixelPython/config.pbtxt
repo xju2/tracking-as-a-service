@@ -1,4 +1,4 @@
-name: "exatrkxPython"
+name: "Exatrkx4PixelPython"
 backend: "python"
 
 input [
@@ -27,5 +27,10 @@ instance_group [
 
 parameters: {
   key: "EXECUTION_ENV_PATH",
-  value: {string_value: "/python_backends/acorn.tar.gz"}
+  value: {string_value: "/workspaces/artifacts/Exatrkx4PixelPython/acorn.tar.gz"}
 }
+
+embedding_fname: "/workspaces/artifacts/Exatrkx4PixelPython/embedding.pt"
+gnn_fname: "/workspaces/artifacts/Exatrkx4PixelPython/gnn.pt"
+r_max: 0.1
+k_max: 1000
