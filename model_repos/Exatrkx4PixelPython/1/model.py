@@ -1,27 +1,28 @@
-import json
-import numpy as np
-import torch
-from typing import Tuple, Union
-import os 
+from __future__ import annotations
 
-os.environ['RAPIDS_NO_INITIALIZE']='1'
-import frnn
+import json
+import os
+
 import cudf
 import cugraph
+import frnn
+import numpy as np
 import pandas as pd
-
-from torch.utils.dlpack import from_dlpack
+import torch
 import triton_python_backend_utils as pb_utils
+from torch.utils.dlpack import from_dlpack
+
+os.environ["RAPIDS_NO_INITIALIZE"] = "1"
+
 
 def build_edges(
     query: torch.Tensor,
     database: torch.Tensor,
     r_max: float = 0.1,
     k_max: int = 1000,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
-
+) -> torch.Tensor:
     # Compute edges
-    dists, idxs, _, _ = frnn.frnn_grid_points(
+    _, idxs, _, _ = frnn.frnn_grid_points(
         points1=query.unsqueeze(0),
         points2=database.unsqueeze(0),
         lengths1=None,
@@ -34,11 +35,7 @@ def build_edges(
     )
 
     idxs: torch.Tensor = idxs.squeeze().int()
-    ind = (
-        torch.arange(idxs.shape[0], device=query.device)
-        .repeat(idxs.shape[1], 1)
-        .T.int()
-    )
+    ind = torch.arange(idxs.shape[0], device=query.device).repeat(idxs.shape[1], 1).T.int()
     positive_idxs = idxs >= 0
     edge_list = torch.stack([ind[positive_idxs], idxs[positive_idxs]]).long()
 
@@ -46,11 +43,12 @@ def build_edges(
     edge_list = edge_list[:, edge_list[0] != edge_list[1]]
     return edge_list
 
+
 class TritonPythonModel:
     """Your Python model must use the same class name. Every Python model
     that is created must have "TritonPythonModel" as the class name.
-    """    
-    
+    """
+
     def initialize(self, args):
         """`initialize` is called only once when the model is being loaded.
         Implementing `initialize` function is optional. This function allows
@@ -67,10 +65,9 @@ class TritonPythonModel:
           * model_version: Model version
           * model_name: Model name
         """
-
         # You must parse model_config. JSON string is not parsed here
-        self.model_config = model_config = json.loads(args['model_config'])
-        self.model_instance_device_id  = json.loads(args['model_instance_device_id'])
+        self.model_config = model_config = json.loads(args["model_config"])
+        self.model_instance_device_id = json.loads(args["model_instance_device_id"])
 
         self.embedding_model = torch.jit.load(model_config["embedding_fname"])
         self.embedding_model.eval()
@@ -82,12 +79,10 @@ class TritonPythonModel:
         self.gnn_model.eval()
 
         # Get OUTPUT0 configuration
-        output0_config = pb_utils.get_output_config_by_name(
-            model_config, "LABELS")
+        output0_config = pb_utils.get_output_config_by_name(model_config, "LABELS")
 
         # Convert Triton types to numpy types
-        self.output0_dtype = pb_utils.triton_string_to_numpy(
-            output0_config['data_type'])
+        self.output0_dtype = pb_utils.triton_string_to_numpy(output0_config["data_type"])
 
     def execute(self, requests):
         """`execute` MUST be implemented in every Python model. `execute`
@@ -97,7 +92,7 @@ class TritonPythonModel:
         Batching) used, `requests` may contain multiple requests. Every
         Python model, must create one pb_utils.InferenceResponse for every
         pb_utils.InferenceRequest in `requests`. If there is an error, you can
-        set the error argument when creating a pb_utils.InferenceResponse
+        set the error argument when creating a pb_utils.InferenceResponse.
 
         Parameters
         ----------
@@ -110,20 +105,15 @@ class TritonPythonModel:
           A list of pb_utils.InferenceResponse. The length of this list must
           be the same as `requests`
         """
-
         output0_dtype = self.output0_dtype
- 
+
         responses = []
         # print(torch.cuda.is_available())
         # Every Python backend must iterate over everyone of the requests
         # and create a pb_utils.InferenceResponse for each of them.
         for request in requests:
-            
             features = pb_utils.get_input_tensor_by_name(request, "FEATURES")
-
-            # zero-copy conversion to pytorch tensor
             features = from_dlpack(features.to_dlpack()).to(self.model_instance_device_id)
-            edge_list = from_dlpack(edge_list.to_dlpack()).to(self.model_instance_device_id)
 
             # Embedding model
             embedding = self.embedding_model(features)
@@ -136,28 +126,29 @@ class TritonPythonModel:
 
             # connected components and track labeling
             num_nodes = embedding.shape[0]
-            cut_edges = edge_list[:,edge_score > 0.75]
-            
+            cut_edges = edge_list[:, edge_score > 0.75]
+
             if cut_edges.shape[1] > 0:
                 cut_df = cudf.DataFrame(cut_edges.T)
                 G = cugraph.Graph()
-                G.from_cudf_edgelist(cut_df,source=0, destination=1, edge_attr=None, renumber=False)
+                G.from_cudf_edgelist(
+                    cut_df, source=0, destination=1, edge_attr=None, renumber=False
+                )
                 labels = cugraph.components.connectivity.weakly_connected_components(G)
                 labels = labels.to_pandas()
 
-                ## label those unlabeled nodes with the same number
+                # label those unlabeled nodes with the same number
                 all_vertex = pd.DataFrame(np.arange(num_nodes), columns=["vertex"])
                 max_label = np.max(labels.labels)
-                labels = labels.merge(all_vertex, on="vertex", how="right").fillna(max_label+1)
+                labels = labels.merge(all_vertex, on="vertex", how="right").fillna(max_label + 1)
 
-                out_0 = labels['labels'].to_numpy()
+                out_0 = labels["labels"].to_numpy()
             else:
                 out_0 = np.arange(num_nodes)
-                           
+
             # Create output tensors. You need pb_utils.Tensor
             # objects to create pb_utils.InferenceResponse.
-            out_tensor_0 = pb_utils.Tensor("LABELS",
-                                           out_0.astype(output0_dtype))
+            out_tensor_0 = pb_utils.Tensor("LABELS", out_0.astype(output0_dtype))
             # Create InferenceResponse. You can set an error here in case
             # there was a problem with handling this inference request.
             # Below is an example of how you can set errors in inference
@@ -165,8 +156,7 @@ class TritonPythonModel:
             #
             # pb_utils.InferenceResponse(
             #    output_tensors=..., TritonError("An error occured"))
-            inference_response = pb_utils.InferenceResponse(
-                output_tensors=[out_tensor_0])
+            inference_response = pb_utils.InferenceResponse(output_tensors=[out_tensor_0])
             responses.append(inference_response)
 
         # You should return a list of pb_utils.InferenceResponse. Length
@@ -178,4 +168,4 @@ class TritonPythonModel:
         Implementing `finalize` function is OPTIONAL. This function allows
         the model to perform any necessary clean ups before exit.
         """
-        print('Cleaning up...')
+        print("Cleaning up...")

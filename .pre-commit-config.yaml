@@ -20,23 +20,20 @@ repos:
     hooks:
     - id: pyupgrade
 
-  - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 22.8.0
-    hooks:
-      - id: black
-        # args: ["--preview"]
-
   - repo: https://github.com/adrienverge/yamllint.git
     rev: v1.17.0
     hooks:
       - id: yamllint
         args: ["-d", "{extends: relaxed, rules: {line-length: disable}}"]
 
-  - repo: https://github.com/PyCQA/flake8
-    rev: 5.0.4
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.3.1
     hooks:
-      - id: flake8
-        args: []
+      # Run the linter.
+      - id: ruff
+        args: [ --fix ]
+      # Run the formatter.
+      - id: ruff-format
 
   - repo: https://github.com/lk16/detect-missing-init
     rev: v0.1.6

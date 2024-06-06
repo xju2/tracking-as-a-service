@@ -9,7 +9,7 @@ LABEL version="1.0"
 
 # Install dependencies
 # Update the CUDA Linux GPG Repository Key
-RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub 
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub
 
 # See also https://root.cern.ch/build-prerequisites
 RUN apt-get update -y && apt-get install -y \
@@ -26,7 +26,7 @@ RUN apt-get update -y && apt-get install -y \
 
 RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN pip3 install --upgrade pip
-RUN pip3 install -U pandas matplotlib seaborn 
+RUN pip3 install -U pandas matplotlib seaborn
 
 # Environment variables
 ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib:/usr/local/lib"
@@ -42,7 +42,7 @@ RUN cd /tmp && mkdir -p src \
   && ${GET} https://github.com/Kitware/CMake/releases/download/v3.29.4/cmake-3.29.4-Linux-x86_64.tar.gz \
     | ${UNPACK_TO_SRC} \
   && rsync -ru src/ ${PREFIX} \
-  && cd /tmp && rm -rf /tmp/src  
+  && cd /tmp && rm -rf /tmp/src
 
 # Install xxHash v0.7.3
 RUN cd /tmp && mkdir -p src \
@@ -52,12 +52,12 @@ RUN cd /tmp && mkdir -p src \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=${PREFIX} \
   && cmake --build build -- install -j20\
-  && cd /tmp && rm -rf src build  
+  && cd /tmp && rm -rf src build
 
 RUN pip3 install pyyaml astunparse expecttest!=0.2.0 hypothesis numpy psutil pyyaml requests setuptools types-dataclasses \
     typing-extensions>=4.8.0 sympy filelock networkx jinja2 fsspec lintrunner ninja packaging optree>=0.11.0 setuptools
 
-RUN apt-get update -y && apt-get install -y gfortran && apt-get clean -y 
+RUN apt-get update -y && apt-get install -y gfortran && apt-get clean -y
 # install magma
 RUN cd /tmp && mkdir -p src \
   && ${GET} https://icl.utk.edu/projectsfiles/magma/downloads/magma-2.8.0.tar.gz \
@@ -168,21 +168,3 @@ RUN git clone --recurse-submodules -b v1.64.1 --depth 1 https://github.com/grpc/
         -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build -- install -j20 \
     && rm -rf src build
-
-# Install triton
-RUN git clone -b r24.05 https://github.com/triton-inference-server/client.git \
-    && cd client && mkdir build && cd build \
-    && cmake ../src/c++ -DTRITON_ENABLE_CC_HTTP=OFF \
-        -DTRITON_ENABLE_CC_GRPC=ON \
-        -DTRITON_ENABLE_PYTHON_GRPC=ON \
-        -DCMAKE_PREFIX_PATH="${PREFIX}/lib64/cmake;${PREFIX}/lib/cmake" \
-        -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-        -DTRITON_USE_THIRD_PARTY=OFF  \
-        -DTRITON_ENABLE_GPU=ON \
-        -DTRITON_ENABLE_METRICS_GPU=ON \
-        -DTRITON_ENABLE_PERF_ANALYZER=ON \
-        -DTRITON_ENABLE_PERF_ANALYZER_C_API=ON \
-    && make -j20 && make install \
-    && cd ../.. && rm -rf client \
-    && cd /tmp && rm -rf src build
-
