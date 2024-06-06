@@ -78,13 +78,17 @@ class TritonPythonModel:
         def get_file_path(name):
             return Path(args["model_repository"]) / args["model_version"] / get_parameter(name)
 
-        self.embedding_model = torch.jit.load(get_file_path("embedding_fname"))
+        self.embedding_model = torch.jit.load(get_file_path("embedding_fname")).to(
+            self.model_instance_device_id
+        )
         self.embedding_model.eval()
 
         self.r_max = float(get_parameter("r_max"))
         self.k_max = int(get_parameter("k_max"))
 
-        self.gnn_model = torch.jit.load(get_file_path("gnn_fname"))
+        self.gnn_model = torch.jit.load(get_file_path("gnn_fname")).to(
+            self.model_instance_device_id
+        )
         self.gnn_model.eval()
 
         # Get OUTPUT0 configuration
@@ -131,7 +135,7 @@ class TritonPythonModel:
 
             # GNN model
             edge_list = edge_list.to(self.model_instance_device_id)
-            edge_score = self.gnn_model(embedding, edge_list).squeeze().sigmoid()
+            edge_score = self.gnn_model(features, edge_list).squeeze().sigmoid()
 
             # connected components and track labeling
             num_nodes = embedding.shape[0]
