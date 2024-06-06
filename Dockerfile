@@ -147,24 +147,32 @@ RUN pip3 install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualst
 #   && rm -rf build src
 
 # faiss v1.7.4
-  RUN cd /tmp && rm -rf src && mkdir -p src \
-  && ${GET} https://github.com/facebookresearch/faiss/archive/refs/tags/v1.7.4.tar.gz \
-    | ${UNPACK_TO_SRC} \
-  && cd src && mkdir build && cd build \
-  && cmake .. -DFAISS_ENABLE_GPU=OFF -DFAISS_ENABLE_PYTHON=ON \
-        -DFAISS_ENABLE_C_API=ON -DBUILD_SHARED_LIBS=ON \
-        -DPython_EXECUTABLE=/usr/bin/python -DPython_LIBRARIES=/usr/lib/python3.8 \
-        -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-  && make -j8 faiss && make -j8 swigfaiss \
-  && cd faiss/python && pip3 install . \
-  && cd ../.. && make install -j8 && cd .. \
-  && rm -rf src
+# RUN cd /tmp && rm -rf src && mkdir -p src \
+#   && ${GET} https://github.com/facebookresearch/faiss/archive/refs/tags/v1.7.4.tar.gz \
+#     | ${UNPACK_TO_SRC} \
+#   && cd src && mkdir build && cd build \
+#   && cmake .. -DFAISS_ENABLE_GPU=ON -DFAISS_ENABLE_PYTHON=ON \
+#         -DFAISS_ENABLE_C_API=ON -DBUILD_SHARED_LIBS=ON \
+#         -DCMAKE_CUDA_ARCHITECTURES=${TORCH_CUDA_ARCH_LIST} \
+#         -DPython_EXECUTABLE=/usr/bin/python -DPython_LIBRARIES=/usr/lib/python3.10 \
+#         -DCMAKE_INSTALL_PREFIX=${PREFIX} \
+#   && make -j8 faiss && make -j8 swigfaiss \
+#   && cd faiss/python && pip3 install . \
+#   && cd ../.. && make install -j8 && cd .. \
+#   && rm -rf src
 
-# Install grpc
-RUN git clone --recurse-submodules -b v1.64.1 --depth 1 https://github.com/grpc/grpc src\
-    && cmake -B build -S src -DgRPC_INSTALL=ON \
-        -DgRPC_BUILD_TESTS=OFF \
-        -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-        -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build -- install -j20 \
-    && rm -rf src build
+# # Install grpc
+# RUN git clone --recurse-submodules -b v1.64.1 --depth 1 https://github.com/grpc/grpc src\
+#     && cmake -B build -S src -DgRPC_INSTALL=ON \
+#         -DgRPC_BUILD_TESTS=OFF \
+#         -DCMAKE_INSTALL_PREFIX=${PREFIX} \
+#         -DCMAKE_BUILD_TYPE=Release \
+#     && cmake --build build -- install -j20 \
+#     && rm -rf src build
+
+# install triton client
+RUN pip3 install tritonclient[all]
+
+# additional Python package needed for acorn
+RUN pip3 install git+https://github.com/LAL/trackml-library.git \
+pyyaml click pytest pytest-cov class-resolver scipy pandas matplotlib uproot tqdm ipykernel atlasify networkx seaborn wandb
