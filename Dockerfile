@@ -54,13 +54,26 @@ RUN cd /tmp && mkdir -p src \
   && cmake --build build -- install -j20\
   && cd /tmp && rm -rf src build  
 
+RUN pip3 install pyyaml astunparse expecttest!=0.2.0 hypothesis numpy psutil pyyaml requests setuptools types-dataclasses \
+    typing-extensions>=4.8.0 sympy filelock networkx jinja2 fsspec lintrunner ninja packaging optree>=0.11.0 setuptools
+
+RUN apt-get update -y && apt-get install -y gfortran && apt-get clean -y 
+# install magma
+RUN cd /tmp && mkdir -p src \
+  && ${GET} https://icl.utk.edu/projectsfiles/magma/downloads/magma-2.8.0.tar.gz \
+    | ${UNPACK_TO_SRC} \
+  && cmake -B build -S src -DGPU_TARGET="Ampere" -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_BUILD_TYPE=Release \
+  && cmake --build build -- install -j20 \
+  && cd /tmp && rm -rf src
+
 # Get pytorch source and build so that it runs on different GPUs.
+ENV TORCH_CUDA_ARCH_LIST="8.0"
 RUN cd /tmp && \
 	git clone --recursive https://github.com/pytorch/pytorch.git && cd pytorch && \
 	git checkout -b r2.3 origin/release/2.3 && \
 	git submodule sync && git submodule update --init --recursive --jobs 0 && \
 	MAX_JOBS=20 USE_CUDA=1 BUILD_TEST=0 USE_FBGEMM=0 USE_QNNPACK=0 USE_DISTRIBUTED=1 BUILD_CAFFE2=0 DEBUG=0 \
-	  CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"} python setup.py install && \
+	  CMAKE_PREFIX_PATH=${PREFIX} python setup.py install && \
 	rm -rf /tmp/pytorch
 
 # FRNN
@@ -87,7 +100,7 @@ RUN cd /tmp/ && mkdir src \
 
 # torch cluster
 RUN cd /tmp/ && mkdir src \
-	&& ${GET https://github.com/rusty1s/pytorch_cluster/archive/refs/tags/1.6.3.tar.gz | ${UNPACK_TO_SRC}} \
+	&& ${GET} https://github.com/rusty1s/pytorch_cluster/archive/refs/tags/1.6.3.tar.gz | ${UNPACK_TO_SRC} \
 	&& cd src && FORCE_CUDA=1 pip3 install torch-cluster && rm -rf /tmp/src
 
 RUN pip3 install torch_geometric lightning>=2.2

@@ -1,7 +1,7 @@
 import json
 import numpy as np
 import torch
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 import os 
 
 os.environ['RAPIDS_NO_INITIALIZE']='1'

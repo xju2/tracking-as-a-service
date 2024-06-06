@@ -6,3 +6,8 @@ This repository contains a set of Tracking models that can be used as a service.
 ### Python backend
 
 
+#### Docker container
+
+```bash
+podman-hpc build --format docker -f Dockerfile -t docexoty/tritonserver
+```
