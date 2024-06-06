@@ -26,11 +26,21 @@ instance_group [
 ]
 
 parameters: {
-  key: "EXECUTION_ENV_PATH",
-  value: {string_value: "/workspaces/artifacts/Exatrkx4PixelPython/acorn.tar.gz"}
+  key: "embedding_fname",
+  value: {string_value: "embedding.pt"}
 }
 
-embedding_fname: "/workspaces/artifacts/Exatrkx4PixelPython/embedding.pt"
-gnn_fname: "/workspaces/artifacts/Exatrkx4PixelPython/gnn.pt"
-r_max: 0.1
-k_max: 1000
+parameters: {
+  key: "gnn_fname",
+  value: {string_value: "gnn.pt"}
+}
+
+parameters: {
+  key: "r_max",
+  value: {string_value: "0.1"}
+}
+
+parameters: {
+  key: "k_max",
+  value: {string_value: "1000"}
+}

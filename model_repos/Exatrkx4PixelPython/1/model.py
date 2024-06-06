@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import cudf
 import cugraph
@@ -69,13 +70,21 @@ class TritonPythonModel:
         self.model_config = model_config = json.loads(args["model_config"])
         self.model_instance_device_id = json.loads(args["model_instance_device_id"])
 
-        self.embedding_model = torch.jit.load(model_config["embedding_fname"])
+        parameters = model_config["parameters"]
+
+        def get_parameter(name):
+            return parameters[name]["string_value"]
+
+        def get_file_path(name):
+            return Path(args["model_repository"]) / args["model_version"] / get_parameter(name)
+
+        self.embedding_model = torch.jit.load(get_file_path("embedding_fname"))
         self.embedding_model.eval()
 
-        self.r_max = model_config["r_max"]
-        self.k_max = model_config["k_max"]
+        self.r_max = float(get_parameter("r_max"))
+        self.k_max = int(get_parameter("k_max"))
 
-        self.gnn_model = torch.jit.load(model_config["gnn_fname"])
+        self.gnn_model = torch.jit.load(get_file_path("gnn_fname"))
         self.gnn_model.eval()
 
         # Get OUTPUT0 configuration
