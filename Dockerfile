@@ -34,6 +34,7 @@ ENV GET="curl --location --silent --create-dirs"
 ENV UNPACK_TO_SRC="tar -xz --strip-components=1 --directory src"
 ENV PREFIX="/usr/local"
 ENV TORCH_CUDA_ARCH_LIST="80"
+ENV PYTHONNOUSERSITE=True
 
 # Manual builds for specific packages
 # Install CMake v3.29.4
@@ -50,18 +51,29 @@ RUN cd /tmp && mkdir -p src \
   && cmake -B build -S src/cmake_unofficial -GNinja\
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-  && cmake --build build -- install -j 20\
+  && cmake --build build -- install -j20\
   && cd /tmp && rm -rf src build  
 
-# libtorch (unzip cannot be used in a pipe...)
-# This matches the CUDA version of the tritonserver image
-ENV LIBTORCH_URL_GPU="https://download.pytorch.org/libtorch/cu121/libtorch-cxx11-abi-shared-with-deps-2.3.1%2Bcu121.zip"
-# https://download.pytorch.org/whl/torch_stable.html
+# Get pytorch source and build so that it runs on different GPUs.
+RUN cd /tmp && \
+	git clone --recursive https://github.com/pytorch/pytorch.git && cd pytorch && \
+	git checkout -b r2.3 origin/release/2.3 && \
+	git submodule sync && git submodule update --init --recursive --jobs 0 && \
+	MAX_JOBS=20 USE_CUDA=1 BUILD_TEST=0 USE_FBGEMM=0 USE_QNNPACK=0 USE_DISTRIBUTED=1 BUILD_CAFFE2=0 DEBUG=0 \
+	  CMAKE_PREFIX_PATH=${CONDA_PREFIX:-"$(dirname $(which conda))/../"} python setup.py install && \
+	rm -rf /tmp/pytorch
 
-RUN ${GET} --output libtorch.zip ${LIBTORCH_URL_GPU} \
-  && unzip libtorch.zip \
-  && rsync -ruv libtorch/ ${PREFIX} \
-  && rm -rf libtorch*
+# FRNN
+RUN cd /tmp/ \
+	&& git clone https://github.com/asnaylor/prefix_sum.git \
+    && git clone https://github.com/xju2/FRNN.git \
+	&& cd prefix_sum \
+	&& NVCC_FLAGS="--std=c++17 -gencode=arch=compute_80,code=sm_80" \
+		python setup.py install \
+    && cd /tmp/FRNN \
+    && NVCC_FLAGS="--std=c++17 -gencode=arch=compute_80,code=sm_80" \
+		python setup.py install && \
+	rm -rf /tmp/prefix_sum && rm -rf /tmp/FRNN
 
 # torchscatter
 RUN cd /tmp/ && mkdir src \
@@ -74,7 +86,7 @@ RUN cd /tmp/ && mkdir src \
 	&& cd src && FORCE_CUDA=1 pip3 install torch-sparse && rm -rf /tmp/src
 
 # torch cluster
-RUN source activate $CONDA_ENV_NAME && cd /tmp/ && mkdir src \
+RUN cd /tmp/ && mkdir src \
 	&& ${GET https://github.com/rusty1s/pytorch_cluster/archive/refs/tags/1.6.3.tar.gz | ${UNPACK_TO_SRC}} \
 	&& cd src && FORCE_CUDA=1 pip3 install torch-cluster && rm -rf /tmp/src
 
