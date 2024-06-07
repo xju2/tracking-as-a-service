@@ -1,0 +1,14 @@
+services:
+  triton:
+    image: docexoty/tritonserver:latest
+    restart: always
+    ports:
+      - "8000:8000"  # HTTP endpcint
+      - "8001:8001"  # gRPC endpoint
+      - "8002:8002"  # Metrics endpoint
+    volumes:
+      - ./models:/models
+    environment:
+      - TRITON_LOG_VERBOSE=1
+      - MODEL_REPOSITORY=/models
+    command: ["tritonserver", "--model-repository=/models"]
