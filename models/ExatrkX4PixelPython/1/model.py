@@ -73,6 +73,8 @@ class TritonPythonModel:
         parameters = model_config["parameters"]
 
         def get_parameter(name):
+            if name not in parameters:
+                raise ValueError(f"Parameter {name} is required but not provided.")
             return parameters[name]["string_value"]
 
         def get_file_path(name):
@@ -86,6 +88,7 @@ class TritonPythonModel:
         self.r_max = float(get_parameter("r_max"))
         self.k_max = int(get_parameter("k_max"))
 
+        print(f"loading gnn model {get_file_path('gnn_fname')}")
         self.gnn_model = torch.jit.load(get_file_path("gnn_fname")).to(
             self.model_instance_device_id
         )
@@ -96,6 +99,10 @@ class TritonPythonModel:
 
         # Convert Triton types to numpy types
         self.output0_dtype = pb_utils.triton_string_to_numpy(output0_config["data_type"])
+
+        self.debug = False
+        if "debug" in parameters:
+            self.debug = parameters["debug"]["string_value"] == "true"
 
     def execute(self, requests):
         """`execute` MUST be implemented in every Python model. `execute`
@@ -137,10 +144,14 @@ class TritonPythonModel:
 
             # GNN model
             edge_list = edge_list.to(self.model_instance_device_id)
-            edge_score = self.gnn_model(features, edge_list).squeeze().sigmoid()
+            print(f"running GNN model on {edge_list.shape[1]} edges.")
+            edge_score = self.gnn_model(features, edge_list)
+            print(f"gnn_output shape: {edge_score.shape}")
+            edge_score = edge_score.squeeze().sigmoid()
+            print(f"edge scores: {edge_score[:10].cpu().numpy()}")
 
             # connected components and track labeling
-            num_nodes = embedding.shape[0]
+            num_nodes = features.shape[0]
             cut_edges = edge_list[:, edge_score > 0.5]
             print(f"cut {cut_edges.shape[1]} edges.")
 
