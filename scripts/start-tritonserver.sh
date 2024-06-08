@@ -6,6 +6,7 @@ TRITON_IMAGE="docexoty/tritonserver:latest"
 
 TRITON_JOBS_DIR="${WORK_DIR}/jobs"
 TRITON_LOGS=$TRITON_JOBS_DIR/$SLURM_JOB_ID
+mkdir -p $TRITON_LOGS
 
 TRITON_LOG_VERBOSE=true
 

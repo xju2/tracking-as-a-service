@@ -134,26 +134,31 @@ class TritonPythonModel:
         for request in requests:
             features = pb_utils.get_input_tensor_by_name(request, "FEATURES")
             features = from_dlpack(features.to_dlpack()).to(self.model_instance_device_id)
-            print(f"{features.shape[0]} space points.")
+            if self.debug:
+                print(f"{features.shape[0]} space points.")
 
             # Embedding model
-            embedding = self.embedding_model(features)
+            with torch.no_grad():
+                embedding = self.embedding_model(features)
 
             edge_list = build_edges(embedding, embedding, r_max=self.r_max, k_max=self.k_max)
-            print(f"created {edge_list.shape[1]} edges.")
+            if self.debug:
+                print(f"created {edge_list.shape[1]} edges.")
 
             # GNN model
             edge_list = edge_list.to(self.model_instance_device_id)
-            print(f"running GNN model on {edge_list.shape[1]} edges.")
-            edge_score = self.gnn_model(features, edge_list)
-            print(f"gnn_output shape: {edge_score.shape}")
-            edge_score = edge_score.squeeze().sigmoid()
-            print(f"edge scores: {edge_score[:10].cpu().numpy()}")
+            if self.debug:
+                print(f"running GNN model on {edge_list.shape[1]} edges.")
+
+            with torch.no_grad():
+                edge_score = self.gnn_model(features, edge_list)
+            edge_score = edge_score.sigmoid()
 
             # connected components and track labeling
             num_nodes = features.shape[0]
             cut_edges = edge_list[:, edge_score > 0.5]
-            print(f"cut {cut_edges.shape[1]} edges.")
+            if self.debug:
+                print(f"cut {cut_edges.shape[1]} edges.")
 
             if cut_edges.shape[1] > 0:
                 cut_df = cudf.DataFrame(cut_edges.T)
@@ -173,7 +178,8 @@ class TritonPythonModel:
             else:
                 out_0 = np.arange(num_nodes)
 
-            print(f"found {np.max(out_0) + 1} tracks.")
+            if self.debug:
+                print(f"found {np.max(out_0) + 1} tracks.")
 
             # Create output tensors. You need pb_utils.Tensor
             # objects to create pb_utils.InferenceResponse.

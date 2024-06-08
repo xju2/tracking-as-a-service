@@ -11,6 +11,22 @@ from tritonclient.utils import np_to_triton_dtype
 rng_generator = np.random.default_rng(12345)
 
 
+def labels_to_candidates(labels, num_nodes):
+    exist_track_id: int = 0
+    track_candidates = []
+    labels_to_trkid = {}
+    for idx in range(num_nodes):
+        label = labels[idx]
+        if label in labels_to_trkid:
+            trkid = labels_to_trkid[label]
+            track_candidates[trkid].append(idx)
+        else:
+            track_candidates.append([idx])
+            labels_to_trkid[label] = exist_track_id
+            exist_track_id += 1
+    return track_candidates
+
+
 def test_ExatrkX4PixelPython(host: str, port: int):
     if port not in {8000, 8001}:
         print(f"Invalid port: {port}")
@@ -52,12 +68,17 @@ def test_ExatrkX4PixelPython(host: str, port: int):
 
     print(f"FEATURES: {input_data.shape}")
     print(f"LABELS: {output0_data.shape}")
-
     print(f"Finished: {model_name}")
+    candidates = labels_to_candidates(output0_data, input_data.shape[0])
+    count = 0
+    for candidate in candidates:
+        if len(candidate) > 3:
+            count += 1
+    print(f"Found {count} tracks with more than 3 hits.")
     sys.exit(0)
 
 
 if __name__ == "__main__":
-    host = "nid003420"
+    host = "nid008649"
     port = 8001
     test_ExatrkX4PixelPython(host, port)
