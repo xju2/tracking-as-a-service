@@ -177,6 +177,8 @@ class TritonPythonModel:
                 tracks = labels.groupby("labels").size().reset_index(name="count")
                 tracks = tracks[tracks["count"] >= 3]
                 tracks["trackid"] = range(tracks.shape[0])
+                if self.debug:
+                    print(f"created {tracks.shape[0]} tracks.")
 
                 labels = labels.merge(tracks, on="labels", how="left").fillna(-1)
                 out_0 = labels["trackid"].to_numpy()
