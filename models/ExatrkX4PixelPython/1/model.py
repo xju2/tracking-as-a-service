@@ -135,7 +135,7 @@ class TritonPythonModel:
             features = pb_utils.get_input_tensor_by_name(request, "FEATURES")
             features = from_dlpack(features.to_dlpack()).to(self.model_instance_device_id)
             if self.debug:
-                print(f"{features.shape[0]} space points.")
+                print(f"{features.shape[0]:,} space points.")
 
             # Embedding model
             with torch.no_grad():
@@ -143,12 +143,12 @@ class TritonPythonModel:
 
             edge_list = build_edges(embedding, embedding, r_max=self.r_max, k_max=self.k_max)
             if self.debug:
-                print(f"created {edge_list.shape[1]} edges.")
+                print(f"created {edge_list.shape[1]:,} edges.")
 
             # GNN model
             edge_list = edge_list.to(self.model_instance_device_id)
             if self.debug:
-                print(f"running GNN model on {edge_list.shape[1]} edges.")
+                print(f"running GNN model on {edge_list.shape[1]:,} edges.")
 
             with torch.no_grad():
                 edge_score = self.gnn_model(features, edge_list)
@@ -158,7 +158,7 @@ class TritonPythonModel:
             num_nodes = features.shape[0]
             cut_edges = edge_list[:, edge_score > 0.5]
             if self.debug:
-                print(f"cut {cut_edges.shape[1]} edges.")
+                print(f"cut {cut_edges.shape[1]:,} edges.")
 
             if cut_edges.shape[1] > 0:
                 cut_df = cudf.DataFrame(cut_edges.T)
@@ -178,7 +178,7 @@ class TritonPythonModel:
                 tracks = tracks[tracks["count"] >= 3]
                 tracks["trackid"] = range(tracks.shape[0])
                 if self.debug:
-                    print(f"created {tracks.shape[0]} tracks.")
+                    print(f"created {tracks.shape[0]:,} tracks.")
 
                 labels = labels.merge(tracks, on="labels", how="left").fillna(-1)
                 out_0 = labels["trackid"].to_numpy()
