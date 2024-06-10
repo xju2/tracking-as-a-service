@@ -37,10 +37,15 @@ parameters: {
 
 parameters: {
   key: "r_max",
-  value: {string_value: "0.1"}
+  value: {string_value: "0.10"}
 }
 
 parameters: {
   key: "k_max",
-  value: {string_value: "1000"}
+  value: {string_value: "250"}
+}
+
+parameters: {
+  key: "debug",
+  value: {string_value: "true"}
 }

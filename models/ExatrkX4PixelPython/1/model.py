@@ -166,20 +166,25 @@ class TritonPythonModel:
                 G.from_cudf_edgelist(
                     cut_df, source=0, destination=1, edge_attr=None, renumber=False
                 )
-                labels = cugraph.components.connectivity.weakly_connected_components(G)
+                labels = cugraph.weakly_connected_components(G)
                 labels = labels.to_pandas()
 
-                # label those unlabeled nodes with the same number
+                # make sure all vertices are included
                 all_vertex = pd.DataFrame(np.arange(num_nodes), columns=["vertex"])
-                max_label = np.max(labels.labels)
-                labels = labels.merge(all_vertex, on="vertex", how="right").fillna(max_label + 1)
+                labels = labels.merge(all_vertex, on="vertex", how="right").fillna(-1)
 
-                out_0 = labels["labels"].to_numpy()
+                # label tracks with more than 3 hits.
+                tracks = labels.groupby("labels").size().reset_index(name="count")
+                tracks = tracks[tracks["count"] >= 3]
+                tracks["trackid"] = range(tracks.shape[0])
+
+                labels = labels.merge(tracks, on="labels", how="left").fillna(-1)
+                out_0 = labels["trackid"].to_numpy()
             else:
                 out_0 = np.arange(num_nodes)
 
             if self.debug:
-                print(f"found {np.max(out_0) + 1} tracks.")
+                print(f"output shape: {out_0.shape}")
 
             # Create output tensors. You need pb_utils.Tensor
             # objects to create pb_utils.InferenceResponse.
