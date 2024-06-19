@@ -32,7 +32,7 @@ parameters: {
 
 parameters: {
   key: "gnn_fname",
-  value: {string_value: "gnn.pt"}
+  value: {string_value: "edge_classifier-ChainedInteractionGNN2-v4.pt"}
 }
 
 parameters: {

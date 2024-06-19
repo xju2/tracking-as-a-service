@@ -1,4 +1,4 @@
-name: "ExatrkX4PixelPython"
+name: "ExatrkX4PixelPythonWithFilter"
 backend: "python"
 
 input [
@@ -32,7 +32,12 @@ parameters: {
 
 parameters: {
   key: "filter_fname",
-  value: {string_value: "edge_classifier-PermutationInvariantFilter.pt"
+  value: {string_value: "edge_classifier-PermutationInvariantFilter.pt"}
+}
+
+parameters: {
+  key: "filter_cut",
+  value: {string_value: "0.2"}
 }
 
 parameters: {
@@ -41,13 +46,18 @@ parameters: {
 }
 
 parameters: {
+  key: "gnn_cut",
+  value: {string_value: "0.5"}
+}
+
+parameters: {
   key: "r_max",
-  value: {string_value: "0.10"}
+  value: {string_value: "0.11"}
 }
 
 parameters: {
   key: "k_max",
-  value: {string_value: "250"}
+  value: {string_value: "300"}
 }
 
 parameters: {

@@ -71,6 +71,9 @@ class TritonPythonModel:
         self.model_instance_device_id = json.loads(args["model_instance_device_id"])
 
         parameters = model_config["parameters"]
+        self.debug = False
+        if "debug" in parameters:
+            self.debug = parameters["debug"]["string_value"] == "true"
 
         def get_parameter(name):
             if name not in parameters:
@@ -80,29 +83,31 @@ class TritonPythonModel:
         def get_file_path(name):
             return Path(args["model_repository"]) / args["model_version"] / get_parameter(name)
 
-        self.embedding_model = torch.jit.load(get_file_path("embedding_fname")).to(
-            self.model_instance_device_id
-        )
-        self.embedding_model.eval()
+        embedding_fname = get_file_path("embedding_fname")
+        if self.debug:
+            print(f"loading embedding model from {embedding_fname}")
+        self.embedding_model = torch.jit.load(embedding_fname).to(self.model_instance_device_id)
 
         self.r_max = float(get_parameter("r_max"))
         self.k_max = int(get_parameter("k_max"))
 
-        print(f"loading gnn model {get_file_path('gnn_fname')}")
-        self.gnn_model = torch.jit.load(get_file_path("gnn_fname")).to(
-            self.model_instance_device_id
-        )
-        self.gnn_model.eval()
+        filter_fname = get_file_path("filter_fname")
+        if self.debug:
+            print(f"loading filter model {filter_fname}")
+        self.filter_model = torch.jit.load(filter_fname).to(self.model_instance_device_id)
+        self.filter_cut = float(get_parameter("filter_cut"))
+
+        gnn_fname = get_file_path("gnn_fname")
+        if self.debug:
+            print(f"loading gnn model {gnn_fname}")
+        self.gnn_model = torch.jit.load(gnn_fname).to(self.model_instance_device_id)
+        self.gnn_cut = float(get_parameter("gnn_cut"))
 
         # Get OUTPUT0 configuration
         output0_config = pb_utils.get_output_config_by_name(model_config, "LABELS")
 
         # Convert Triton types to numpy types
         self.output0_dtype = pb_utils.triton_string_to_numpy(output0_config["data_type"])
-
-        self.debug = False
-        if "debug" in parameters:
-            self.debug = parameters["debug"]["string_value"] == "true"
 
     def execute(self, requests):
         """`execute` MUST be implemented in every Python model. `execute`
@@ -141,27 +146,38 @@ class TritonPythonModel:
             with torch.no_grad():
                 embedding = self.embedding_model(features)
 
+            # FRNN
             edge_list = build_edges(embedding, embedding, r_max=self.r_max, k_max=self.k_max)
             if self.debug:
                 print(f"created {edge_list.shape[1]:,} edges.")
 
-            # GNN model
+            # Filter model
             edge_list = edge_list.to(self.model_instance_device_id)
-            if self.debug:
-                print(f"running GNN model on {edge_list.shape[1]:,} edges.")
+            with torch.no_grad():
+                edge_score = [
+                    self.filter_model(features, subset).squeeze(-1)
+                    for subset in torch.tensor_split(edge_list, 10, dim=1)
+                ]
+                edge_score = torch.cat(edge_score)
+                edge_score = edge_score.sigmoid()
 
+            edge_list = edge_list[:, edge_score >= self.filter_cut]
+            if self.debug:
+                print(f"after filtering: {edge_list.shape[1]:,} edges.")
+
+            # GNN model
             with torch.no_grad():
                 edge_score = self.gnn_model(features, edge_list)
             edge_score = edge_score.sigmoid()
 
             # connected components and track labeling
             num_nodes = features.shape[0]
-            cut_edges = edge_list[:, edge_score > 0.50]
+            edge_list = edge_list[:, edge_score >= self.gnn_cut]
             if self.debug:
-                print(f"cut {cut_edges.shape[1]:,} edges.")
+                print(f"after GNN: {edge_list.shape[1]:,} edges.")
 
-            if cut_edges.shape[1] > 0:
-                cut_df = cudf.DataFrame(cut_edges.T)
+            if edge_list.shape[1] > 0:
+                cut_df = cudf.DataFrame(edge_list.T)
                 G = cugraph.Graph()
                 G.from_cudf_edgelist(
                     cut_df, source=0, destination=1, edge_attr=None, renumber=False
