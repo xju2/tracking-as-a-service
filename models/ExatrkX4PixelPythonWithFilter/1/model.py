@@ -45,6 +45,16 @@ def build_edges(
     return edge_list
 
 
+# def cc_and_walk(
+#     edge_list: torch.Tensor,
+#     edge_scores: torch.Tensor,
+#     cc_cut: float,
+#     walk_min: float,
+#     walk_max: float,
+# ):
+#     pass
+
+
 class TritonPythonModel:
     """Your Python model must use the same class name. Every Python model
     that is created must have "TritonPythonModel" as the class name.

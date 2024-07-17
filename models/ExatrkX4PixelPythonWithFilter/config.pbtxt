@@ -27,27 +27,7 @@ instance_group [
 
 parameters: {
   key: "embedding_fname",
-  value: {string_value: "graph_construction-MetricLearning.pt"}
-}
-
-parameters: {
-  key: "filter_fname",
-  value: {string_value: "edge_classifier-PermutationInvariantFilter.pt"}
-}
-
-parameters: {
-  key: "filter_cut",
-  value: {string_value: "0.2"}
-}
-
-parameters: {
-  key: "gnn_fname",
-  value: {string_value: "edge_classifier-ChainedInteractionGNN2.pt"}
-}
-
-parameters: {
-  key: "gnn_cut",
-  value: {string_value: "0.5"}
+  value: {string_value: "embedding.pt"}
 }
 
 parameters: {
@@ -57,6 +37,36 @@ parameters: {
 
 parameters: {
   key: "k_max",
+  value: {string_value: "300"}
+}
+
+parameters: {
+  key: "filter_fname",
+  value: {string_value: "filter.pt"}
+}
+
+parameters: {
+  key: "filter_cut",
+  value: {string_value: "0.2"}
+}
+
+parameters: {
+  key: "gnn_fname",
+  value: {string_value: "gnn.pt"}
+}
+
+parameters: {
+  key: "score_cut_cc",
+  value: {string_value: "0.11"}
+}
+
+parameters: {
+  key: "score_cut_walk_min",
+  value: {string_value: "300"}
+}
+
+parameters: {
+  key: "score_cut_walk_max",
   value: {string_value: "300"}
 }
 
