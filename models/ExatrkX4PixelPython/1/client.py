@@ -74,7 +74,7 @@ if __name__ == "__main__":
     import argparse
 
     args = argparse.ArgumentParser()
-    args.add_argument("-h", "--host", type=str, default="localhost")
+    args.add_argument("-u", "--host", type=str, default="localhost")
     args.add_argument("-p", "--port", type=int, default=8001)
     args = args.parse_args()
 
