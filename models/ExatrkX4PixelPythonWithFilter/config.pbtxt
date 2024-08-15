@@ -26,11 +26,6 @@ instance_group [
 ]
 
 parameters: {
-  key: "embedding_fname",
-  value: {string_value: "embedding.pt"}
-}
-
-parameters: {
   key: "r_max",
   value: {string_value: "0.11"}
 }
@@ -41,36 +36,41 @@ parameters: {
 }
 
 parameters: {
-  key: "filter_fname",
-  value: {string_value: "filter.pt"}
-}
-
-parameters: {
   key: "filter_cut",
   value: {string_value: "0.2"}
 }
 
 parameters: {
-  key: "gnn_fname",
-  value: {string_value: "gnn.pt"}
+  key: "filter_batches",
+  value: {string_value: "10"}
 }
 
 parameters: {
-  key: "score_cut_cc",
-  value: {string_value: "0.11"}
+  key: "cc_cut",
+  value: {string_value: "0.01"}
 }
 
 parameters: {
-  key: "score_cut_walk_min",
-  value: {string_value: "300"}
+  key: "walk_min",
+  value: {string_value: "0.1"}
 }
 
 parameters: {
-  key: "score_cut_walk_max",
-  value: {string_value: "300"}
+  key: "walk_max",
+  value: {string_value: "0.6"}
 }
 
 parameters: {
   key: "debug",
   value: {string_value: "true"}
+}
+
+parameters: {
+  key: "r_index",
+  value: {string_value: "0"}
+}
+
+parameters: {
+  key: "z_index",
+  value: {string_value: "2"}
 }

@@ -4,55 +4,12 @@ import json
 import os
 from pathlib import Path
 
-import cudf
-import cugraph
-import frnn
-import numpy as np
-import pandas as pd
-import torch
 import triton_python_backend_utils as pb_utils
 from torch.utils.dlpack import from_dlpack
 
+from .run_inference import MetricLearningInference
+
 os.environ["RAPIDS_NO_INITIALIZE"] = "1"
-
-
-def build_edges(
-    query: torch.Tensor,
-    database: torch.Tensor,
-    r_max: float = 0.1,
-    k_max: int = 1000,
-) -> torch.Tensor:
-    # Compute edges
-    _, idxs, _, _ = frnn.frnn_grid_points(
-        points1=query.unsqueeze(0),
-        points2=database.unsqueeze(0),
-        lengths1=None,
-        lengths2=None,
-        K=k_max,
-        r=r_max,
-        grid=None,
-        return_nn=False,
-        return_sorted=True,
-    )
-
-    idxs: torch.Tensor = idxs.squeeze().int()
-    ind = torch.arange(idxs.shape[0], device=query.device).repeat(idxs.shape[1], 1).T.int()
-    positive_idxs = idxs >= 0
-    edge_list = torch.stack([ind[positive_idxs], idxs[positive_idxs]]).long()
-
-    # Remove self-loops
-    edge_list = edge_list[:, edge_list[0] != edge_list[1]]
-    return edge_list
-
-
-# def cc_and_walk(
-#     edge_list: torch.Tensor,
-#     edge_scores: torch.Tensor,
-#     cc_cut: float,
-#     walk_min: float,
-#     walk_max: float,
-# ):
-#     pass
 
 
 class TritonPythonModel:
@@ -90,28 +47,19 @@ class TritonPythonModel:
                 raise ValueError(f"Parameter {name} is required but not provided.")
             return parameters[name]["string_value"]
 
-        def get_file_path(name):
-            return Path(args["model_repository"]) / args["model_version"] / get_parameter(name)
-
-        embedding_fname = get_file_path("embedding_fname")
-        if self.debug:
-            print(f"loading embedding model from {embedding_fname}")
-        self.embedding_model = torch.jit.load(embedding_fname).to(self.model_instance_device_id)
-
-        self.r_max = float(get_parameter("r_max"))
-        self.k_max = int(get_parameter("k_max"))
-
-        filter_fname = get_file_path("filter_fname")
-        if self.debug:
-            print(f"loading filter model {filter_fname}")
-        self.filter_model = torch.jit.load(filter_fname).to(self.model_instance_device_id)
-        self.filter_cut = float(get_parameter("filter_cut"))
-
-        gnn_fname = get_file_path("gnn_fname")
-        if self.debug:
-            print(f"loading gnn model {gnn_fname}")
-        self.gnn_model = torch.jit.load(gnn_fname).to(self.model_instance_device_id)
-        self.gnn_cut = float(get_parameter("gnn_cut"))
+        model_path = Path(args["model_repository"]) / args["model_version"]
+        self.inference = MetricLearningInference(
+            model_path,
+            get_parameter("r_max"),
+            get_parameter("k_max"),
+            get_parameter("filter_cut"),
+            get_parameter("filter_batches"),
+            get_parameter("cc_cut"),
+            get_parameter("walk_min"),
+            get_parameter("walk_max"),
+            get_parameter("r_index"),
+            get_parameter("z_index"),
+        )
 
         # Get OUTPUT0 configuration
         output0_config = pb_utils.get_output_config_by_name(model_config, "LABELS")
@@ -152,71 +100,15 @@ class TritonPythonModel:
             if self.debug:
                 print(f"{features.shape[0]:,} space points.")
 
-            # Embedding model
-            with torch.no_grad():
-                embedding = self.embedding_model(features)
-
-            # FRNN
-            edge_list = build_edges(embedding, embedding, r_max=self.r_max, k_max=self.k_max)
-            if self.debug:
-                print(f"created {edge_list.shape[1]:,} edges.")
-
-            # Filter model
-            edge_list = edge_list.to(self.model_instance_device_id)
-            with torch.no_grad():
-                edge_score = [
-                    self.filter_model(features, subset).squeeze(-1)
-                    for subset in torch.tensor_split(edge_list, 10, dim=1)
-                ]
-                edge_score = torch.cat(edge_score)
-                edge_score = edge_score.sigmoid()
-
-            edge_list = edge_list[:, edge_score >= self.filter_cut]
-            if self.debug:
-                print(f"after filtering: {edge_list.shape[1]:,} edges.")
-
-            # GNN model
-            with torch.no_grad():
-                edge_score = self.gnn_model(features, edge_list)
-            edge_score = edge_score.sigmoid()
-
-            # connected components and track labeling
-            num_nodes = features.shape[0]
-            edge_list = edge_list[:, edge_score >= self.gnn_cut]
-            if self.debug:
-                print(f"after GNN: {edge_list.shape[1]:,} edges.")
-
-            if edge_list.shape[1] > 0:
-                cut_df = cudf.DataFrame(edge_list.T)
-                G = cugraph.Graph()
-                G.from_cudf_edgelist(
-                    cut_df, source=0, destination=1, edge_attr=None, renumber=False
-                )
-                labels = cugraph.weakly_connected_components(G)
-                labels = labels.to_pandas()
-
-                # make sure all vertices are included
-                all_vertex = pd.DataFrame(np.arange(num_nodes), columns=["vertex"])
-                labels = labels.merge(all_vertex, on="vertex", how="right").fillna(-1)
-
-                # label tracks with more than 3 hits.
-                tracks = labels.groupby("labels").size().reset_index(name="count")
-                tracks = tracks[tracks["count"] >= 3]
-                tracks["trackid"] = range(tracks.shape[0])
-                if self.debug:
-                    print(f"created {tracks.shape[0]:,} tracks.")
-
-                labels = labels.merge(tracks, on="labels", how="left").fillna(-1)
-                out_0 = labels["trackid"].to_numpy()
-            else:
-                out_0 = np.arange(num_nodes)
+            # Run inference
+            track_ids = self.inference(features)
 
             if self.debug:
-                print(f"output shape: {out_0.shape}")
+                print(f"output shape: {track_ids.shape}")
 
             # Create output tensors. You need pb_utils.Tensor
             # objects to create pb_utils.InferenceResponse.
-            out_tensor_0 = pb_utils.Tensor("LABELS", out_0.astype(output0_dtype))
+            out_tensor_0 = pb_utils.Tensor("LABELS", track_ids.astype(output0_dtype))
             # Create InferenceResponse. You can set an error here in case
             # there was a problem with handling this inference request.
             # Below is an example of how you can set errors in inference
