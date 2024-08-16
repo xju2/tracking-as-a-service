@@ -235,9 +235,15 @@ class MetricLearningInference:
         with torch.no_grad():
             embedding = self.embedding_model(node_features)
 
+        if self.debug:
+            print(f"after embedding, shape = {embedding.shape}")
+
         # Build edges
         edge_index = build_edges(embedding, embedding, r_max=self.r_max, k_max=self.k_max)
         del embedding
+
+        if self.debug:
+            print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
 
         # Filtering
         with torch.no_grad():
@@ -248,6 +254,8 @@ class MetricLearningInference:
 
         edge_score = torch.cat(edge_score).sigmoid()
         edge_index = edge_index[:, edge_score > self.filter_cut]
+        if self.debug:
+            print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
 
         # GNN
         with torch.no_grad():
@@ -258,6 +266,8 @@ class MetricLearningInference:
         R = node_features[:, self.r_index] ** 2 + node_features[:, self.z_index] ** 2
         edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
         edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
+        if self.debug:
+            print("After GNN...")
 
         score_name = "edge_score"
         graph = Data(
@@ -309,3 +319,16 @@ class MetricLearningInference:
 
     def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
         return self.forward(node_features, hit_id)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Inference for Metric Learning")
+    add_arg = parser.add_argument("-i", "--input", type=str, default="node_features.pt")
+
+    args = parser.parse_args()
+    inference = MetricLearningInference(model_path="./", r_max=0.11, debug=True)
+    node_features = torch.load(args.input)
+    track_ids = inference(node_features)
+    print(track_ids)

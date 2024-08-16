@@ -22,17 +22,19 @@ def labels_to_candidates(labels, num_nodes):
     return track_candidates
 
 
-def test_ExatrkX4PixelPython(host: str, port: int):
+def test_ExatrkX4PixelPython(host: str, port: int, input_fname="node_features.pt"):
     if port not in {8000, 8001}:
         print(f"Invalid port: {port}")
         sys.exit(1)
 
-    model_name = "ExatrkX4PixelPython"
+    model_name = "ExatrkX4PixelPythonWithFilter"
     shape = [10, 15]
-    input_fname = Path("node_features.pt")
+    input_fname = Path(input_fname)
     if input_fname.exists():
+        print(f"Loading input data from {input_fname}.")
         input_data = torch.load(input_fname).float().cpu().numpy()
     else:
+        print("Generating random input data.")
         input_data = rng_generator.random(shape).astype(np.float32)
 
     if port == 8000:
@@ -74,8 +76,9 @@ if __name__ == "__main__":
     import argparse
 
     args = argparse.ArgumentParser()
-    args.add_argument("-h", "--host", type=str, default="localhost")
+    args.add_argument("-s", "--server", type=str, default="localhost")
     args.add_argument("-p", "--port", type=int, default=8001)
+    args.add_argument("-i", "--input", type=str, default="node_features.pt")
     args = args.parse_args()
 
-    test_ExatrkX4PixelPython(args.host, args.port)
+    test_ExatrkX4PixelPython(args.server, args.port, args.input)

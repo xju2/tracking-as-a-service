@@ -51,16 +51,16 @@ class TritonPythonModel:
         model_path = Path(args["model_repository"]) / args["model_version"]
         self.inference = MetricLearningInference(
             model_path,
-            get_parameter("r_max"),
-            get_parameter("k_max"),
-            get_parameter("filter_cut"),
-            get_parameter("filter_batches"),
-            get_parameter("cc_cut"),
-            get_parameter("walk_min"),
-            get_parameter("walk_max"),
+            float(get_parameter("r_max")),
+            int(get_parameter("k_max")),
+            float(get_parameter("filter_cut")),
+            int(get_parameter("filter_batches")),
+            float(get_parameter("cc_cut")),
+            float(get_parameter("walk_min")),
+            float(get_parameter("walk_max")),
             "cuda" if torch.cuda.is_available() else "cpu",
-            get_parameter("r_index"),
-            get_parameter("z_index"),
+            int(get_parameter("r_index")),
+            int(get_parameter("z_index")),
             self.debug,
         )
 
@@ -101,7 +101,7 @@ class TritonPythonModel:
             features = pb_utils.get_input_tensor_by_name(request, "FEATURES")
             features = from_dlpack(features.to_dlpack()).to(self.model_instance_device_id)
             if self.debug:
-                print(f"{features.shape[0]:,} space points.")
+                print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
 
             # Run inference
             track_ids = self.inference(features)
