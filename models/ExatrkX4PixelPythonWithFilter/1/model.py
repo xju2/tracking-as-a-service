@@ -4,10 +4,11 @@ import json
 import os
 from pathlib import Path
 
+import torch
 import triton_python_backend_utils as pb_utils
 from torch.utils.dlpack import from_dlpack
 
-from .run_inference import MetricLearningInference
+from .inference import MetricLearningInference
 
 os.environ["RAPIDS_NO_INITIALIZE"] = "1"
 
@@ -57,8 +58,10 @@ class TritonPythonModel:
             get_parameter("cc_cut"),
             get_parameter("walk_min"),
             get_parameter("walk_max"),
+            "cuda" if torch.cuda.is_available() else "cpu",
             get_parameter("r_index"),
             get_parameter("z_index"),
+            self.debug,
         )
 
         # Get OUTPUT0 configuration
