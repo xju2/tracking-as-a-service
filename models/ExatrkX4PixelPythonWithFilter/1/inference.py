@@ -6,7 +6,7 @@ from pathlib import Path
 
 import frnn
 import networkx as nx
-import pandas as pd
+import numpy as np
 import torch
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
@@ -158,9 +158,8 @@ def get_tracks(G, th_min, th_add, score_name):
         a_road = max(road, key=len)[:-1]  # [:-1] is to remove the last None
 
         # Case where there is only one hit: a_road = (<node>,None)
-        if len(a_road) < 2:
+        if len(a_road) < 3:
             used_nodes.add(node)
-            # sub_graphs.append([G.nodes[node]["hit_id"]]) # same in acorn
             continue
 
         # Need to drop the last item of the a_road tuple, since it is None
@@ -258,14 +257,17 @@ class MetricLearningInference:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
 
         # GNN
+        # rearrange the edges by their distances from collision point.
+        R = node_features[:, self.r_index] ** 2 + node_features[:, self.z_index] ** 2
+        edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
+        edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
+
+        # apply GNN
         with torch.no_grad():
             edge_score = self.gnn_model(node_features, edge_index)
         edge_score = edge_score.sigmoid()
 
         # CC and Walkthrough
-        R = node_features[:, self.r_index] ** 2 + node_features[:, self.z_index] ** 2
-        edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
-        edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
         if self.debug:
             print("After GNN...")
 
@@ -294,28 +296,10 @@ class MetricLearningInference:
             print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
 
         # label each hits.
-        flat_trks = []
-        flat_trkid = []
-        flat_method = []
-        trkid_offset = 0
-
-        for method, trks in all_trkx.items():
-            for i, p in enumerate(trks):
-                flat_trks.extend(p)
-                flat_trkid.extend([i + trkid_offset] * len(p))
-                flat_method.extend([method] * len(p))
-            trkid_offset += len(trks)
-
-        track_df = pd.DataFrame({
-            "hit_id": flat_trks,
-            "track_id": flat_trkid,
-            "reco_method": flat_method,
-        })
-        # label the rest of hits with -1.
-        hit_id_df = pd.DataFrame({"hit_id": hit_id.cpu().numpy()})
-        hit_id_df = hit_id_df.merge(track_df, on="hit_id", how="left")
-        hit_id_df = hit_id_df.fillna(-1)
-        return hit_id_df.track_id.to_numpy()
+        track_candidates = np.array([
+            item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
+        ])
+        return track_candidates
 
     def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
         return self.forward(node_features, hit_id)

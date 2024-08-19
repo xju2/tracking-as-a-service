@@ -104,6 +104,8 @@ class TritonPythonModel:
                 print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
 
             # Run inference
+            if self.debug:
+                torch.save(features, "coming_node_features.pt")
             track_ids = self.inference(features)
 
             if self.debug:

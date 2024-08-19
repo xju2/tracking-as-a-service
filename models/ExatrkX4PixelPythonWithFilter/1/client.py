@@ -11,14 +11,15 @@ from tritonclient.utils import np_to_triton_dtype
 rng_generator = np.random.default_rng(12345)
 
 
-def labels_to_candidates(labels, num_nodes):
-    num_tracks = np.max(labels) + 1
-    track_candidates = [[] for _ in range(num_tracks)]
-    for idx in range(num_nodes):
-        label = labels[idx]
-        if label == -1:
+def labels_to_candidates(labels):
+    track_candidates = []
+    this_track = []
+    for sp_idx in labels:
+        if sp_idx == -1:
+            track_candidates.append(this_track)
+            this_track = []
             continue
-        track_candidates[label].append(idx)
+        this_track.append(sp_idx)
     return track_candidates
 
 
@@ -63,11 +64,10 @@ def test_ExatrkX4PixelPython(host: str, port: int, input_fname="node_features.pt
     response = client.infer(model_name, inputs, request_id=str(1), outputs=outputs)
     output0_data = response.as_numpy("LABELS")
 
+    num_tracks = len(labels_to_candidates(output0_data))
     print(f"FEATURES: {input_data.shape}")
-    print(f"LABELS: {output0_data.shape}")
+    print(f"Found: {num_tracks} tracks.")
     print(f"Finished: {model_name}")
-    candidates = labels_to_candidates(output0_data, input_data.shape[0])
-    print(f"Found {len(candidates)} tracks with more than 3 hits.")
 
     sys.exit(0)
 
