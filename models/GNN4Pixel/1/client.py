@@ -23,12 +23,13 @@ def labels_to_candidates(labels):
     return track_candidates
 
 
-def test_ExatrkX4PixelPython(host: str, port: int, input_fname="node_features.pt"):
+def test_GNN4Pixel(
+    host: str, port: int, input_fname="node_features.pt", model_name: str = "GNN4Pixel"
+):
     if port not in {8000, 8001}:
         print(f"Invalid port: {port}")
         sys.exit(1)
 
-    model_name = "ExatrkX4PixelPythonWithFilter"
     shape = [10, 15]
     input_fname = Path(input_fname)
     if input_fname.exists():
@@ -81,4 +82,4 @@ if __name__ == "__main__":
     args.add_argument("-i", "--input", type=str, default="node_features.pt")
     args = args.parse_args()
 
-    test_ExatrkX4PixelPython(args.server, args.port, args.input)
+    test_GNN4Pixel(args.server, args.port, args.input)

@@ -1,4 +1,4 @@
-name: "ExatrkX4PixelPythonWithFilter"
+name: "GNN4Pixel"
 backend: "python"
 
 input [
