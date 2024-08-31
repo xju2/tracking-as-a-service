@@ -202,6 +202,8 @@ class MetricLearningInference:
         r_index: int = 0,
         z_index: int = 2,
         debug: bool = False,
+        node_feature_names: str = "r,phi,z,cluster_x_1,cluster_y_1,cluster_z_1,charge_count_1,count_1,loc_eta_1,loc_phi_1,glob_eta_1,glob_phi_1,localDir0_1,localDir1_1,localDir2_1",  # noqa: E501
+        node_feature_scales: str = "300, 3.15, 3000, 300, 300, 3000, 30, 20, -2, 1.5, 2, 3.15, 1, 1, 1",  # noqa: E501
     ):
         model_path = Path(model_path) if isinstance(model_path, str) else model_path
         self.r_max = r_max
@@ -215,6 +217,8 @@ class MetricLearningInference:
         self.r_index = r_index
         self.z_index = z_index
         self.debug = debug
+        self.node_feature_names = [x.strip() for x in node_feature_names.split(",")]
+        self.node_feature_scales = [float(x.strip()) for x in node_feature_scales.split(",")]
 
         embedding_path = model_path / "embedding.pt"
         filtering_path = model_path / "filter.pt"
@@ -226,6 +230,9 @@ class MetricLearningInference:
 
     def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
         node_features = node_features.to(self.device)
+        assert node_features.shape[1] == len(self.node_feature_names)
+
+        node_features /= torch.tensor(self.node_feature_scales, device=self.device)
 
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=self.device)
