@@ -23,7 +23,7 @@ def labels_to_candidates(labels):
     return track_candidates
 
 
-def test_ExatrkX4PixelPython(host: str, port: int, input_fname="node_features.pt"):
+def test_ExaTrkX(host: str, port: int, input_fname="node_features.pt"):
     if port not in {8000, 8001}:
         print(f"Invalid port: {port}")
         sys.exit(1)
@@ -81,4 +81,4 @@ if __name__ == "__main__":
     args.add_argument("-i", "--input", type=str, default="node_features.pt")
     args = args.parse_args()
 
-    test_ExatrkX4PixelPython(args.server, args.port, args.input)
+    test_ExaTrkX(args.server, args.port, args.input)
