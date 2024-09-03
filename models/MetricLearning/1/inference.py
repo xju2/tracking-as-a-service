@@ -312,11 +312,22 @@ class MetricLearningInference:
         if self.debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
 
+        if edge_index.shape[1] == 0:
+            return torch.full((1,), -1, dtype=torch.long, device=self.device)
+
         # GNNFiltering
         filter_inputs = embedding_inputs
+        pyg_data = Data(x=filter_inputs, edge_index=edge_index)
+        pyg_data = self.transform(pyg_data)
+
         with torch.no_grad():
+            gnn_embedding = self.filter_model.gnn(filter_inputs, pyg_data.adj_t)
+            if self.debug:
+                print("gnn_embedding", gnn_embedding.shape)
             edge_score = [
-                self.filter_model(filter_inputs, subset, self.transform(subset)).squeeze(-1)
+                self.filter_model.net(
+                    torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
+                ).squeeze(-1)
                 for subset in torch.tensor_split(edge_index, self.filter_batches, dim=1)
             ]
 
@@ -327,7 +338,10 @@ class MetricLearningInference:
 
         # GNN
         # rearrange the edges by their distances from collision point.
-        R = node_features[:, self.r_index] ** 2 + node_features[:, self.z_index] ** 2
+        R = (
+            node_features[:, self.input_node_features.index("r")] ** 2
+            + node_features[:, self.input_node_features.index("z")] ** 2
+        )
         edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
         edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
 
@@ -339,8 +353,8 @@ class MetricLearningInference:
         # calculate edge features: dr, dphi, dz, deta, phislope, rphislope
 
         def reset_angle(angles):
-            angles[angles > torch.pi] = angles[angles > torch.pi] - 2 * torch.pi
-            angles[angles < -torch.pi] = angles[angles < -torch.pi] + 2 * torch.pi
+            angles[angles > torch.pi] -= 2 * torch.pi
+            angles[angles < -torch.pi] += 2 * torch.pi
             return angles
 
         def calculate_edge_features():
@@ -361,7 +375,7 @@ class MetricLearningInference:
 
         edge_features = calculate_edge_features()
         with torch.no_grad():
-            edge_score = self.gnn_model(node_features, edge_index, edge_features)
+            edge_score = self.gnn_model(gnn_input, edge_index, edge_features)
         edge_score = edge_score.sigmoid()
 
         # CC and Walkthrough

@@ -28,12 +28,12 @@ def test_ExatrkX4PixelPython(host: str, port: int, input_fname="node_features.pt
         print(f"Invalid port: {port}")
         sys.exit(1)
 
-    model_name = "ExatrkX4PixelPythonWithFilter"
-    shape = [10, 15]
+    model_name = "MetricLearning"
+    shape = [10, 44]
     input_fname = Path(input_fname)
     if input_fname.exists():
         print(f"Loading input data from {input_fname}.")
-        input_data = torch.load(input_fname).float().cpu().numpy()
+        input_data = torch.load(input_fname, map_location="cpu").float().cpu().numpy()
     else:
         print("Generating random input data.")
         input_data = rng_generator.random(shape).astype(np.float32)

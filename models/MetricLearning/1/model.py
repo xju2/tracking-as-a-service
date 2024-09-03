@@ -105,7 +105,7 @@ class TritonPythonModel:
 
             # Run inference
             if self.debug:
-                torch.save(features, "coming_node_features.pt")
+                torch.save(features, "node_features_for_metriclearning.pt")
             track_ids = self.inference(features)
 
             if self.debug:
