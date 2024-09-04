@@ -1,6 +1,6 @@
 #!/bin/bash
 
-WORK_DIR="/pscratch/sd/x/xju/ITk/ForFinalPaper/tracking-as-a-service"
+WORK_DIR="$( dirname "${BASH_SOURCE[0]}" )/../"
 TRITON_MODELS="${WORK_DIR}/models"
 TRITON_IMAGE="docexoty/tritonserver:latest"
 
