@@ -10,7 +10,12 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 from torch_geometric.transforms import ToSparseTensor
-from torch_geometric.utils import to_networkx
+from torch_geometric.utils import sort_edge_index, to_networkx
+from torch_sparse import SparseTensor
+
+# torch.set_float32_matmul_precision("high")
+torch.set_float32_matmul_precision("highest")
+torch.manual_seed(42)
 
 
 def build_edges(
@@ -188,6 +193,32 @@ def get_simple_path(G, do_copy: bool = False):
     return final_tracks, in_graph
 
 
+def run_gnn_filter(
+    model: torch.nn.Module, x: torch.Tensor, edge_index: torch.Tensor, batches: int = 10
+):
+    with torch.no_grad():
+        num_nodes: int = x.size(0)
+        sorted_edge_index = sort_edge_index(edge_index, sort_by_row=False)
+        adj_t = SparseTensor(
+            row=sorted_edge_index[1],
+            col=sorted_edge_index[0],
+            sparse_sizes=(num_nodes, num_nodes),
+            is_sorted=True,
+            trust_data=True,
+        )
+
+        print(adj_t)
+        gnn_embedding = model.gnn(x, adj_t)
+        filter_scores = [
+            model.net(
+                torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
+            ).squeeze(-1)
+            for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
+        ]
+    filter_scores = torch.cat(filter_scores).sigmoid()
+    return filter_scores, sorted_edge_index, gnn_embedding
+
+
 class MetricLearningInference:
     def __init__(
         self,
@@ -286,10 +317,11 @@ class MetricLearningInference:
             "cluster_r_2",
             "cluster_phi_2",
             "cluster_eta_2",
+            "region",
         ]
 
     def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
-        node_features = node_features.to(self.device)
+        node_features = node_features.to(self.device).float()
 
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=self.device)
@@ -298,45 +330,118 @@ class MetricLearningInference:
         embedding_inputs = node_features[
             :, [self.input_node_features.index(x) for x in self.embedding_node_features]
         ]
-        embedding_inputs /= torch.tensor(self.embedding_node_scale, device=self.device)
+        embedding_inputs /= torch.tensor(self.embedding_node_scale, device=self.device).float()
         with torch.no_grad():
             embedding = self.embedding_model(embedding_inputs)
 
         if self.debug:
             print(f"after embedding, shape = {embedding.shape}")
+            print("embedding data", embedding[0])
 
         # Build edges
         edge_index = build_edges(embedding, embedding, r_max=self.r_max, k_max=self.k_max)
-        del embedding
+        if edge_index.shape[1] == 0:
+            return torch.full((1,), -1, dtype=torch.long, device=self.device)
 
         if self.debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
 
-        if edge_index.shape[1] == 0:
-            return torch.full((1,), -1, dtype=torch.long, device=self.device)
+        # make it undirected and remove duplicates.
+        edge_index[:, edge_index[0] > edge_index[1]] = edge_index[
+            :, edge_index[0] > edge_index[1]
+        ].flip(0)
+        edge_index = torch.unique(edge_index, dim=-1)
+
+        # random flip
+        random_flip = torch.randint(2, (edge_index.shape[1],), dtype=torch.bool)
+        edge_index[:, random_flip] = edge_index[:, random_flip].flip(0)
+
+        if self.debug:
+            print("after removing duplications: ", edge_index.shape, edge_index[:, 0])
 
         # GNNFiltering
-        filter_inputs = embedding_inputs
-        pyg_data = Data(x=filter_inputs, edge_index=edge_index)
-        pyg_data = self.transform(pyg_data)
+        edge_scores, edge_index, _ = run_gnn_filter(
+            self.filter_model, embedding_inputs, edge_index, self.filter_batches
+        )
 
-        with torch.no_grad():
-            gnn_embedding = self.filter_model.gnn(filter_inputs, pyg_data.adj_t)
-            if self.debug:
-                print("gnn_embedding", gnn_embedding.shape)
-            edge_score = [
-                self.filter_model.net(
-                    torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
-                ).squeeze(-1)
-                for subset in torch.tensor_split(edge_index, self.filter_batches, dim=1)
-            ]
+        if self.debug:
+            print("edge_score", edge_scores[:10])
+            print("edge_index", edge_index[:, :10])
+            out_data = Data(edge_index=edge_index, edge_scores=edge_scores, embedding=embedding)
 
-        edge_score = torch.cat(edge_score).sigmoid()
-        edge_index = edge_index[:, edge_score > self.filter_cut]
+        # apply fitlering score cuts.
+        edge_index = edge_index[:, edge_scores >= self.filter_cut]
+
         if self.debug:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
 
-        # GNN
+        edge_index[:, edge_index[0] > edge_index[1]] = edge_index[
+            :, edge_index[0] > edge_index[1]
+        ].flip(0)
+        # prepare GNN inputs
+        gnn_input = node_features[
+            :, [self.input_node_features.index(x) for x in self.gnn_node_features]
+        ]
+        gnn_input /= torch.tensor(self.gnn_node_scale, device=self.device).float()
+
+        # # same features on the 3 channels in the STRIP ENDCAP.
+        if (
+            "region" in self.input_node_features
+            and self.input_node_features.index("region") < node_features.shape[1]
+        ):
+            hit_region = node_features[:, self.input_node_features.index("region")]
+            gnn_input_mask = torch.logical_or(hit_region == 2, hit_region == 6).reshape(-1)
+            gnn_input[gnn_input_mask] = torch.cat([gnn_input[gnn_input_mask, 0:4]] * 3, dim=1)
+
+        # calculate edge features: dr, dphi, dz, deta, phislope, rphislope
+        def reset_angle(angles):
+            angles[angles > torch.pi] -= 2 * torch.pi
+            angles[angles < -torch.pi] += 2 * torch.pi
+            return angles
+
+        def calculate_edge_features():
+            r = (
+                node_features[:, self.input_node_features.index("r")]
+                / self.gnn_node_scale[self.gnn_node_features.index("r")]
+            )
+            phi = (
+                node_features[:, self.input_node_features.index("phi")]
+                / self.gnn_node_scale[self.gnn_node_features.index("phi")]
+            )
+            z = (
+                node_features[:, self.input_node_features.index("z")]
+                / self.gnn_node_scale[self.gnn_node_features.index("z")]
+            )
+            eta = (
+                node_features[:, self.input_node_features.index("eta")]
+                / self.gnn_node_scale[self.gnn_node_features.index("eta")]
+            )
+
+            src, dst = edge_index
+            dr = r[dst] - r[src]
+            dphi = reset_angle((phi[dst] - phi[src]) * torch.pi) / torch.pi
+            dz = z[dst] - z[src]
+            deta = eta[dst] - eta[src]
+            phislope = torch.clamp(
+                torch.nan_to_num(dphi / dr, nan=0.0, posinf=100, neginf=-100), -100, 100
+            )
+            r_avg = (r[dst] + r[src]) / 2.0
+            rphislope = torch.nan_to_num(torch.multiply(r_avg, phislope), nan=0.0)
+            return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
+
+        edge_features = calculate_edge_features()
+        with torch.no_grad():
+            edge_scores = self.gnn_model(gnn_input, edge_index, edge_features).sigmoid()
+
+        # CC and Walkthrough
+        if self.debug:
+            print("After GNN...")
+            out_data.gnn_scores = edge_scores
+            out_data.gnn_input_edges = edge_index
+            out_data.gnn_edge_features = edge_features
+            out_data.gnn_node_features = gnn_input
+            torch.save(out_data, "debug.pt")
+
         # rearrange the edges by their distances from collision point.
         R = (
             node_features[:, self.input_node_features.index("r")] ** 2
@@ -345,59 +450,19 @@ class MetricLearningInference:
         edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
         edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
 
-        # apply GNN
-        gnn_input = node_features[
-            :, [self.input_node_features.index(x) for x in self.gnn_node_features]
-        ]
-        gnn_input /= torch.tensor(self.gnn_node_scale, device=self.device)
-        # calculate edge features: dr, dphi, dz, deta, phislope, rphislope
-
-        def reset_angle(angles):
-            angles[angles > torch.pi] -= 2 * torch.pi
-            angles[angles < -torch.pi] += 2 * torch.pi
-            return angles
-
-        def calculate_edge_features():
-            r = node_features[:, self.input_node_features.index("r")]
-            src, dst = edge_index
-            dr = r[dst] - r[src]
-            phi = node_features[:, self.input_node_features.index("phi")]
-            dphi = reset_angle((phi[dst] - phi[src]) * torch.pi) / torch.pi
-            z = node_features[:, self.input_node_features.index("z")]
-            dz = z[dst] - z[src]
-            eta = node_features[:, self.input_node_features.index("eta")]
-            deta = eta[dst] - eta[src]
-            phislope = dphi / dr
-            r_avg = (r[dst] + r[src]) / 2.0
-            phislope_new = torch.clamp(phislope, -100, 100)
-            rphislope = torch.multiply(r_avg, phislope_new)
-            return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
-
-        edge_features = calculate_edge_features()
-        with torch.no_grad():
-            edge_score = self.gnn_model(gnn_input, edge_index, edge_features)
-        edge_score = edge_score.sigmoid()
-
-        # CC and Walkthrough
-        if self.debug:
-            print("After GNN...")
-
-        score_name = "edge_score"
+        score_name = "edge_scores"
         graph = Data(
             x=node_features,
             edge_index=edge_index,
             hit_id=hit_id,
-            edge_score=edge_score,
+            edge_scores=edge_scores,
         )
         G = to_networkx(graph, ["hit_id"], [score_name], to_undirected=False)
 
         # Remove edges below threshold
         list_fake_edges = [(u, v) for u, v, e in G.edges(data=True) if e[score_name] <= self.cc_cut]
         G.remove_edges_from(list_fake_edges)
-
         G.remove_nodes_from(list(nx.isolates(G)))
-        # print(f"After removing fake edges; Number of nodes
-        # = {G.number_of_nodes():,}, number of edges = {G.number_of_edges():,}")
 
         all_trkx = {}
         all_trkx["cc"], G = get_simple_path(G)
@@ -406,10 +471,22 @@ class MetricLearningInference:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
             print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
 
+        # sort each track by R.
+        for trk in all_trkx["cc"] + all_trkx["walk"]:
+            trk.sort(key=lambda x: R[x])
+
         # label each hits.
         track_candidates = np.array([
             item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
         ])
+        # write candidates to a file.
+        if self.debug:
+            out_str = [
+                "".join([f"{item} " for item in track]) + "\n"
+                for track in all_trkx["cc"] + all_trkx["walk"]
+            ]
+            with open("track_candidates.txt", "w") as f:
+                f.writelines(out_str)
         return track_candidates
 
     def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
@@ -420,10 +497,16 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Inference for Metric Learning")
-    add_arg = parser.add_argument("-i", "--input", type=str, default="node_features.pt")
+    parser.add_argument("-i", "--input", type=str, default="node_features.pt")
+    parser.add_argument("-m", "--model", type=str, default="./")
 
     args = parser.parse_args()
-    inference = MetricLearningInference(model_path="./", r_max=0.11, debug=True)
+    if not Path(args.model).exists():
+        raise FileNotFoundError(f"Model path {args.model} does not exist.")
+
+    inference = MetricLearningInference(
+        model_path=args.model, r_max=0.12, k_max=1000, filter_cut=0.05, debug=True
+    )
     node_features = torch.load(args.input)
     track_ids = inference(node_features)
-    print(track_ids)
+    print("total tracks", np.sum(track_ids == -1))
