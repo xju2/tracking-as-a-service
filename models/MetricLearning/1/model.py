@@ -59,8 +59,6 @@ class TritonPythonModel:
             float(get_parameter("walk_min")),
             float(get_parameter("walk_max")),
             "cuda" if torch.cuda.is_available() else "cpu",
-            int(get_parameter("r_index")),
-            int(get_parameter("z_index")),
             self.debug,
         )
 
