@@ -9,7 +9,6 @@ import networkx as nx
 import numpy as np
 import torch
 from torch_geometric.data import Data
-from torch_geometric.transforms import ToSparseTensor
 from torch_geometric.utils import sort_edge_index, to_networkx
 from torch_sparse import SparseTensor
 
@@ -206,8 +205,6 @@ def run_gnn_filter(
             is_sorted=True,
             trust_data=True,
         )
-
-        print(adj_t)
         gnn_embedding = model.gnn(x, adj_t)
         filter_scores = [
             model.net(
@@ -266,7 +263,6 @@ class MetricLearningInference:
         self.embedding_model = torch.jit.load(embedding_path).to(device)
         self.filter_model = torch.jit.load(filtering_path).to(device)
         self.gnn_model = torch.jit.load(gnn_path).to(device)
-        self.transform = ToSparseTensor(remove_edge_index=False)
 
         self.input_node_features = [
             "r",
