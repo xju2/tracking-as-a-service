@@ -10,7 +10,6 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 from torch_geometric.utils import sort_edge_index, to_networkx
-from torch_sparse import SparseTensor
 
 # torch.set_float32_matmul_precision("high")
 torch.set_float32_matmul_precision("highest")
@@ -196,16 +195,8 @@ def run_gnn_filter(
     model: torch.nn.Module, x: torch.Tensor, edge_index: torch.Tensor, batches: int = 10
 ):
     with torch.no_grad():
-        num_nodes: int = x.size(0)
         sorted_edge_index = sort_edge_index(edge_index, sort_by_row=False)
-        adj_t = SparseTensor(
-            row=sorted_edge_index[1],
-            col=sorted_edge_index[0],
-            sparse_sizes=(num_nodes, num_nodes),
-            is_sorted=True,
-            trust_data=True,
-        )
-        gnn_embedding = model.gnn(x, adj_t)
+        gnn_embedding = model.gnn(x, sorted_edge_index)
         filter_scores = [
             model.net(
                 torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
