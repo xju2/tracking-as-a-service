@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import operator
-from functools import partial
+from dataclasses import dataclass
 from pathlib import Path
 
 import frnn
@@ -10,8 +9,8 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 from torch_geometric.utils import sort_edge_index, to_networkx
+from walkthrough import get_simple_path, get_tracks
 
-# torch.set_float32_matmul_precision("high")
 torch.set_float32_matmul_precision("highest")
 torch.manual_seed(42)
 
@@ -45,152 +44,6 @@ def build_edges(
     return edge_list
 
 
-def find_next_hits(
-    G: nx.DiGraph,
-    current_hit: int,
-    used_hits: set,
-    score_name: str,
-    th_min: float,
-    th_add: float,
-):
-    """
-    Find what are the next hits we keep to build trakc candidates
-    G : the graph (usually pre-filtered)
-    current_hit : index of the current_hit considered
-    used_hits : a set of already used hits (to avoid re-using them)
-    th_min : minimal threshold required to build at least one track candidate
-             (we take the hit with the highest score)
-    th_add : additional threshold above which we keep all hit neighbors, and not only the
-             the one with the highest score. It results in several track candidates
-             (th_add should be larger than th_min)
-    path is previous hits.
-    """
-    # Sanity check
-    if th_add < th_min:
-        print(
-            f"WARNING : the minimal threshold {th_min} is above the additional"
-            f" threshold {th_add},               this is not how the walkthrough is"
-            " supposed to be run."
-        )
-
-    # Check if current hit still have unused neighbor(s) hit(s)
-    neighbors = [n for n in G.neighbors(current_hit) if n not in used_hits]
-    if not neighbors:
-        return None
-
-    neighbors_scores = [(n, G.edges[(current_hit, n)][score_name]) for n in neighbors]
-
-    # Stop here if none of the remaining neighbors are above the minimal threshold
-    best_neighbor = max(neighbors_scores, key=operator.itemgetter(1))
-    if best_neighbor[1] <= th_min:
-        return None
-
-    # Always add the neighoors with a score above th_add
-    next_hits = [n for n, score in neighbors_scores if score > th_add]
-
-    # Always add the highest scoring neighbor above th_min if it's not already in next_hits
-    if not next_hits:
-        best_hit = best_neighbor[0]
-        if best_hit not in next_hits:
-            next_hits.append(best_hit)
-
-    return next_hits
-
-
-def build_roads(G, starting_node, next_hit_fn, used_hits: set) -> list[tuple]:
-    """Build roads starting from a given node.
-
-    Args
-    ----
-        G : nx.DiGraph, the input graph after GNN.
-        starting_node : int, the starting node.
-        next_hit_fn : callable, the function to find the next hit.
-        used_hits : set, the set of used hits.
-
-    Returns
-    -------
-        path : list of list, the list of possible paths starting from the given node.
-    """
-    # Initialize the path with the starting node
-    path = [(starting_node,)]
-
-    while True:
-        new_path = []
-        is_all_none = True
-
-        # Loop on all paths and see if we can find more hits to be added
-        for pp in path:
-            start = pp[-1]
-
-            # Case where we are at the end of an interesting path
-            if start is None:
-                new_path.append(pp)
-                continue
-
-            # Call next hits function
-            current_used_hits = used_hits | set(pp)
-            next_hits = next_hit_fn(G, start, current_used_hits)
-            if next_hits is None:
-                new_path.append((*pp, None))
-            else:
-                is_all_none = False
-                # branching the paths for the next hits.
-                new_path.append((*pp, *next_hits))
-
-        path = new_path
-        # If all paths have reached the end, break
-        if is_all_none:
-            break
-
-    return path
-
-
-def get_tracks(G, th_min, th_add, score_name):
-    """Run walkthrough and return subgraphs."""
-    used_nodes = set()
-    sub_graphs = []
-    next_hit_fn = partial(find_next_hits, th_min=th_min, th_add=th_add, score_name=score_name)
-
-    # Rely on the fact the graph was already topologically sorted
-    # to start looking first on nodes without incoming edges
-    for node in nx.topological_sort(G):
-        # Ignore already used nodes
-        if node in used_nodes:
-            continue
-
-        road = build_roads(G, node, next_hit_fn, used_nodes)
-        a_road = max(road, key=len)[:-1]  # [:-1] is to remove the last None
-
-        # Case where there is only one hit: a_road = (<node>,None)
-        if len(a_road) < 3:
-            used_nodes.add(node)
-            continue
-
-        # Need to drop the last item of the a_road tuple, since it is None
-        sub_graphs.append([G.nodes[n]["hit_id"] for n in a_road])
-        used_nodes.update(a_road)
-
-    return sub_graphs
-
-
-def get_simple_path(G, do_copy: bool = False):
-    in_graph = G.copy() if not do_copy else G
-    final_tracks = []
-    connected_components = sorted(nx.weakly_connected_components(in_graph))
-    for i in range(len(connected_components)):
-        is_signal_path = True
-        sub_graph = connected_components[i]
-        for node in sub_graph:
-            if not (in_graph.out_degree(node) <= 1 and in_graph.in_degree(node) <= 1):
-                is_signal_path = False
-        if is_signal_path:
-            track = [in_graph.nodes[node]["hit_id"] for node in sub_graph]
-            if len(track) > 2:
-                final_tracks.append(track)
-            in_graph.remove_nodes_from(sub_graph)
-    return final_tracks, in_graph
-
-
 def run_gnn_filter(
     model: torch.nn.Module, x: torch.Tensor, edge_index: torch.Tensor, batches: int = 10
 ):
@@ -207,53 +60,53 @@ def run_gnn_filter(
     return filter_scores, sorted_edge_index, gnn_embedding
 
 
+@dataclass
+class MetricLearningInferenceConfig:
+    model_path: str | Path
+    device: str
+    debug: bool
+    r_max: float
+    k_max: int
+    filter_cut: float
+    filter_batches: int
+    cc_cut: float
+    walk_min: float
+    walk_max: float
+    embedding_node_features: str
+    embedding_node_scale: str
+    filter_node_features: str
+    filter_node_scale: str
+    gnn_node_features: str
+    gnn_node_scale: str
+
+    def __post_init__(self):
+        self.embedding_node_features = [x.strip() for x in self.embedding_node_features.split(",")]
+        self.embedding_node_scale = [float(x.strip()) for x in self.embedding_node_scale.split(",")]
+        assert len(self.embedding_node_features) == len(self.embedding_node_scale)
+
+        self.filter_node_features = [x.strip() for x in self.filter_node_features.split(",")]
+        self.filter_node_scale = [float(x.strip()) for x in self.filter_node_scale.split(",")]
+        assert len(self.filter_node_features) == len(self.filter_node_scale)
+
+        self.gnn_node_features = [x.strip() for x in self.gnn_node_features.split(",")]
+        self.gnn_node_scale = [float(x.strip()) for x in self.gnn_node_scale.split(",")]
+        assert len(self.gnn_node_features) == len(self.gnn_node_scale)
+
+        self.model_path = (
+            Path(self.model_path) if isinstance(self.model_path, str) else self.model_path
+        )
+
+
 class MetricLearningInference:
-    def __init__(
-        self,
-        model_path: str,
-        r_max: float = 0.1,
-        k_max: int = 300,
-        filter_cut: float = 0.2,
-        filter_batches: int = 10,
-        cc_cut: float = 0.01,
-        walk_min: float = 0.1,
-        walk_max: float = 0.6,
-        device: str = "cuda",
-        debug: bool = False,
-        embedding_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2",  # noqa: E501
-        embedding_node_scale: str = "1000, 3.14, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14",  # noqa: E501
-        filter_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2",  # noqa: E501
-        filter_node_scale: str = "1000, 3.14, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14",  # noqa: E501
-        gnn_node_features: str = "r, phi, z, eta, cluster_r_1, cluster_phi_1, cluster_z_1, cluster_eta_1, cluster_r_2, cluster_phi_2, cluster_z_2, cluster_eta_2",  # noqa: E501
-        gnn_node_scale: str = "1000.0, 3.14159265359, 1000.0, 1.0, 1000.0, 3.14159265359, 1000.0, 1.0, 1000.0, 3.14159265359, 1000.0, 1.0",  # noqa: E501
-    ):
-        model_path = Path(model_path) if isinstance(model_path, str) else model_path
-        self.r_max = r_max
-        self.k_max = k_max
-        self.filter_cut = filter_cut
-        self.filter_batches = filter_batches
-        self.cc_cut = cc_cut
-        self.walk_min = walk_min
-        self.walk_max = walk_max
-        self.device = device
-        self.debug = debug
+    def __init__(self, config: MetricLearningInferenceConfig):
+        self.config = config
+        embedding_path = self.config.model_path / "embedding.pt"
+        filtering_path = self.config.model_path / "filter.pt"
+        gnn_path = self.config.model_path / "gnn.pt"
 
-        self.embedding_node_features = [x.strip() for x in embedding_node_features.split(",")]
-        self.embedding_node_scale = [float(x.strip()) for x in embedding_node_scale.split(",")]
-        self.filter_node_features = [x.strip() for x in filter_node_features.split(",")]
-        self.filter_node_scale = [float(x.strip()) for x in filter_node_scale.split(",")]
-        assert self.embedding_node_features == self.filter_node_features
-
-        self.gnn_node_features = [x.strip() for x in gnn_node_features.split(",")]
-        self.gnn_node_scale = [float(x.strip()) for x in gnn_node_scale.split(",")]
-
-        embedding_path = model_path / "embedding.pt"
-        filtering_path = model_path / "filter.pt"
-        gnn_path = model_path / "gnn.pt"
-
-        self.embedding_model = torch.jit.load(embedding_path).to(device)
-        self.filter_model = torch.jit.load(filtering_path).to(device)
-        self.gnn_model = torch.jit.load(gnn_path).to(device)
+        self.embedding_model = torch.jit.load(embedding_path).to(self.config.device)
+        self.filter_model = torch.jit.load(filtering_path).to(self.config.device)
+        self.gnn_model = torch.jit.load(gnn_path).to(self.config.device)
 
         self.input_node_features = [
             "r",
@@ -304,29 +157,33 @@ class MetricLearningInference:
         ]
 
     def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
-        node_features = node_features.to(self.device).float()
+        device = self.config.device
+        debug = self.config.debug
 
+        node_features = node_features.to(device).float()
         if hit_id is None:
-            hit_id = torch.arange(node_features.shape[0], device=self.device)
+            hit_id = torch.arange(node_features.shape[0], device=device)
 
         # Metric Learning
         embedding_inputs = node_features[
-            :, [self.input_node_features.index(x) for x in self.embedding_node_features]
+            :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
         ]
-        embedding_inputs /= torch.tensor(self.embedding_node_scale, device=self.device).float()
+        embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
         with torch.no_grad():
             embedding = self.embedding_model(embedding_inputs)
 
-        if self.debug:
+        if debug:
             print(f"after embedding, shape = {embedding.shape}")
             print("embedding data", embedding[0])
 
         # Build edges
-        edge_index = build_edges(embedding, embedding, r_max=self.r_max, k_max=self.k_max)
+        edge_index = build_edges(
+            embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
+        )
         if edge_index.shape[1] == 0:
-            return torch.full((1,), -1, dtype=torch.long, device=self.device)
+            return torch.full((1,), -1, dtype=torch.long, device=device)
 
-        if self.debug:
+        if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
 
         # make it undirected and remove duplicates.
@@ -339,23 +196,30 @@ class MetricLearningInference:
         random_flip = torch.randint(2, (edge_index.shape[1],), dtype=torch.bool)
         edge_index[:, random_flip] = edge_index[:, random_flip].flip(0)
 
-        if self.debug:
+        if debug:
             print("after removing duplications: ", edge_index.shape, edge_index[:, 0])
 
         # GNNFiltering
+        if self.config.filter_node_features == self.config.gnn_node_features:
+            filtering_inputs = embedding_inputs
+        else:
+            filtering_inputs = node_features[
+                :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
+            ]
+            filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
         edge_scores, edge_index, _ = run_gnn_filter(
-            self.filter_model, embedding_inputs, edge_index, self.filter_batches
+            self.filter_model, filtering_inputs, edge_index, self.config.filter_batches
         )
 
-        if self.debug:
+        if debug:
             print("edge_score", edge_scores[:10])
             print("edge_index", edge_index[:, :10])
             out_data = Data(edge_index=edge_index, edge_scores=edge_scores, embedding=embedding)
 
         # apply fitlering score cuts.
-        edge_index = edge_index[:, edge_scores >= self.filter_cut]
+        edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
 
-        if self.debug:
+        if debug:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
 
         edge_index[:, edge_index[0] > edge_index[1]] = edge_index[
@@ -363,9 +227,9 @@ class MetricLearningInference:
         ].flip(0)
         # prepare GNN inputs
         gnn_input = node_features[
-            :, [self.input_node_features.index(x) for x in self.gnn_node_features]
+            :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
         ]
-        gnn_input /= torch.tensor(self.gnn_node_scale, device=self.device).float()
+        gnn_input /= torch.tensor(self.config.gnn_node_scale, device=device).float()
 
         # # same features on the 3 channels in the STRIP ENDCAP.
         if (
@@ -385,19 +249,19 @@ class MetricLearningInference:
         def calculate_edge_features():
             r = (
                 node_features[:, self.input_node_features.index("r")]
-                / self.gnn_node_scale[self.gnn_node_features.index("r")]
+                / self.config.gnn_node_scale[self.config.gnn_node_features.index("r")]
             )
             phi = (
                 node_features[:, self.input_node_features.index("phi")]
-                / self.gnn_node_scale[self.gnn_node_features.index("phi")]
+                / self.config.gnn_node_scale[self.config.gnn_node_features.index("phi")]
             )
             z = (
                 node_features[:, self.input_node_features.index("z")]
-                / self.gnn_node_scale[self.gnn_node_features.index("z")]
+                / self.config.gnn_node_scale[self.config.gnn_node_features.index("z")]
             )
             eta = (
                 node_features[:, self.input_node_features.index("eta")]
-                / self.gnn_node_scale[self.gnn_node_features.index("eta")]
+                / self.config.gnn_node_scale[self.config.gnn_node_features.index("eta")]
             )
 
             src, dst = edge_index
@@ -417,7 +281,7 @@ class MetricLearningInference:
             edge_scores = self.gnn_model(gnn_input, edge_index, edge_features).sigmoid()
 
         # CC and Walkthrough
-        if self.debug:
+        if debug:
             print("After GNN...")
             out_data.gnn_scores = edge_scores
             out_data.gnn_input_edges = edge_index
@@ -443,14 +307,20 @@ class MetricLearningInference:
         G = to_networkx(graph, ["hit_id"], [score_name], to_undirected=False)
 
         # Remove edges below threshold
-        list_fake_edges = [(u, v) for u, v, e in G.edges(data=True) if e[score_name] <= self.cc_cut]
+        list_fake_edges = [
+            (u, v) for u, v, e in G.edges(data=True) if e[score_name] <= self.config.cc_cut
+        ]
         G.remove_edges_from(list_fake_edges)
         G.remove_nodes_from(list(nx.isolates(G)))
 
         all_trkx = {}
         all_trkx["cc"], G = get_simple_path(G)
-        all_trkx["walk"] = get_tracks(G, self.walk_min, self.walk_max, score_name)
-        if self.debug:
+        print("the graph information")
+        with open("graph_info.txt", "w") as f:
+            f.write(f"{G.nodes(data=True)}\n")
+            f.write(f"{G.edges(data=True)}\n")
+        all_trkx["walk"] = get_tracks(G, self.config.walk_min, self.config.walk_max, score_name)
+        if debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
             print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
 
@@ -463,7 +333,7 @@ class MetricLearningInference:
             item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
         ])
         # write candidates to a file.
-        if self.debug:
+        if debug:
             out_str = [
                 "".join([f"{item} " for item in track]) + "\n"
                 for track in all_trkx["cc"] + all_trkx["walk"]
@@ -474,6 +344,31 @@ class MetricLearningInference:
 
     def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
         return self.forward(node_features, hit_id)
+
+
+def create_metric_learing_inference(model_path: str, device: str, debug: bool, precision: str):
+    config = MetricLearningInferenceConfig(
+        model_path=model_path,
+        device=device,
+        debug=debug,
+        r_max=0.12,
+        k_max=1000,
+        filter_cut=0.05,
+        filter_batches=10,
+        cc_cut=0.01,
+        walk_min=0.1,
+        walk_max=0.6,
+        embedding_node_features="r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2",  # noqa: E501
+        embedding_node_scale="1000, 3.14, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14",  # noqa: E501
+        filter_node_features="r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2",  # noqa: E501
+        filter_node_scale="1000, 3.14, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14",  # noqa: E501
+        gnn_node_features="r, phi, z, eta, cluster_r_1, cluster_phi_1, cluster_z_1, cluster_eta_1, cluster_r_2, cluster_phi_2, cluster_z_2, cluster_eta_2",  # noqa: E501
+        gnn_node_scale="1000.0, 3.14159265359, 1000.0, 1.0, 1000.0, 3.14159265359, 1000.0, 1.0, 1000.0, 3.14159265359, 1000.0, 1.0",  # noqa: E501
+    )
+
+    torch.set_float32_matmul_precision(precision)
+    model = MetricLearningInference(config)
+    return model
 
 
 if __name__ == "__main__":
@@ -487,9 +382,7 @@ if __name__ == "__main__":
     if not Path(args.model).exists():
         raise FileNotFoundError(f"Model path {args.model} does not exist.")
 
-    inference = MetricLearningInference(
-        model_path=args.model, r_max=0.12, k_max=1000, filter_cut=0.05, debug=True
-    )
+    inference = create_metric_learing_inference(args.model, "cuda", False, False, "highest")
     node_features = torch.load(args.input)
     track_ids = inference(node_features)
     print("total tracks", np.sum(track_ids == -1))
