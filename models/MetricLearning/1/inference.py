@@ -8,10 +8,10 @@ import networkx as nx
 import numpy as np
 import torch
 from torch_geometric.data import Data
-from torch_geometric.utils import sort_edge_index, to_networkx
+from torch_geometric.utils import to_networkx
+from torch_model_inference import run_gnn_filter, run_torch_model
 from walkthrough import get_simple_path, get_tracks
 
-torch.set_float32_matmul_precision("highest")
 torch.manual_seed(42)
 
 
@@ -44,26 +44,11 @@ def build_edges(
     return edge_list
 
 
-def run_gnn_filter(
-    model: torch.nn.Module, x: torch.Tensor, edge_index: torch.Tensor, batches: int = 10
-):
-    with torch.no_grad():
-        sorted_edge_index = sort_edge_index(edge_index, sort_by_row=False)
-        gnn_embedding = model.gnn(x, sorted_edge_index)
-        filter_scores = [
-            model.net(
-                torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
-            ).squeeze(-1)
-            for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
-        ]
-    filter_scores = torch.cat(filter_scores).sigmoid()
-    return filter_scores, sorted_edge_index, gnn_embedding
-
-
 @dataclass
 class MetricLearningInferenceConfig:
     model_path: str | Path
     device: str
+    auto_cast: bool
     debug: bool
     r_max: float
     k_max: int
@@ -169,12 +154,22 @@ class MetricLearningInference:
             :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
         ]
         embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
-        with torch.no_grad():
-            embedding = self.embedding_model(embedding_inputs)
 
+        embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
         if debug:
             print(f"after embedding, shape = {embedding.shape}")
             print("embedding data", embedding[0])
+            out_data = Data(embedding=embedding)
+
+        # delete the embedding inputs if not needed.
+        if self.config.filter_node_features == self.config.embedding_node_features:
+            filtering_inputs = embedding_inputs
+        else:
+            del embedding_inputs
+            filtering_inputs = node_features[
+                :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
+            ]
+            filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
 
         # Build edges
         edge_index = build_edges(
@@ -185,6 +180,8 @@ class MetricLearningInference:
 
         if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
+        else:
+            del embedding
 
         # make it undirected and remove duplicates.
         edge_index[:, edge_index[0] > edge_index[1]] = edge_index[
@@ -200,24 +197,23 @@ class MetricLearningInference:
             print("after removing duplications: ", edge_index.shape, edge_index[:, 0])
 
         # GNNFiltering
-        if self.config.filter_node_features == self.config.gnn_node_features:
-            filtering_inputs = embedding_inputs
-        else:
-            filtering_inputs = node_features[
-                :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
-            ]
-            filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
         edge_scores, edge_index, _ = run_gnn_filter(
-            self.filter_model, filtering_inputs, edge_index, self.config.filter_batches
+            self.filter_model,
+            self.config.auto_cast,
+            self.config.filter_batches,
+            filtering_inputs,
+            edge_index,
         )
 
         if debug:
             print("edge_score", edge_scores[:10])
             print("edge_index", edge_index[:, :10])
-            out_data = Data(edge_index=edge_index, edge_scores=edge_scores, embedding=embedding)
+            out_data.edge_index = edge_index
+            out_data.edge_scores = edge_scores
 
         # apply fitlering score cuts.
         edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
+        del edge_scores
 
         if debug:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
@@ -277,8 +273,10 @@ class MetricLearningInference:
             return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
 
         edge_features = calculate_edge_features()
-        with torch.no_grad():
-            edge_scores = self.gnn_model(gnn_input, edge_index, edge_features).sigmoid()
+
+        edge_scores = run_torch_model(
+            self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
+        ).sigmoid()
 
         # CC and Walkthrough
         if debug:
@@ -315,10 +313,11 @@ class MetricLearningInference:
 
         all_trkx = {}
         all_trkx["cc"], G = get_simple_path(G)
-        print("the graph information")
-        with open("graph_info.txt", "w") as f:
-            f.write(f"{G.nodes(data=True)}\n")
-            f.write(f"{G.edges(data=True)}\n")
+        if debug:
+            print("the graph information")
+            with open("graph_info.txt", "w") as f:
+                f.write(f"{G.nodes(data=True)}\n")
+                f.write(f"{G.edges(data=True)}\n")
         all_trkx["walk"] = get_tracks(G, self.config.walk_min, self.config.walk_max, score_name)
         if debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
@@ -346,10 +345,13 @@ class MetricLearningInference:
         return self.forward(node_features, hit_id)
 
 
-def create_metric_learing_inference(model_path: str, device: str, debug: bool, precision: str):
+def create_metric_learning_end2end_rel24(
+    model_path: str, device: str, debug: bool, precision: str, auto_cast: bool
+):
     config = MetricLearningInferenceConfig(
         model_path=model_path,
         device=device,
+        auto_cast=auto_cast,
         debug=debug,
         r_max=0.12,
         k_max=1000,
@@ -375,14 +377,39 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Inference for Metric Learning")
-    parser.add_argument("-i", "--input", type=str, default="node_features.pt")
-    parser.add_argument("-m", "--model", type=str, default="./")
+    parser.add_argument("-i", "--input", type=str, default="node_features.pt", help="Input file")
+    parser.add_argument("-m", "--model", type=str, default="./", help="Model path")
+    parser.add_argument("-p", "--precision", type=str, default="highest", help="Precision")
+    parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")
+    parser.add_argument("-d", "--device", default="cuda", help="Device")
+    parser.add_argument("-t", "--timing", action="store_true", help="Time the inference")
 
     args = parser.parse_args()
     if not Path(args.model).exists():
         raise FileNotFoundError(f"Model path {args.model} does not exist.")
 
-    inference = create_metric_learing_inference(args.model, "cuda", False, False, "highest")
+    inference = create_metric_learning_end2end_rel24(
+        model_path=args.model,
+        device=args.device,
+        debug=args.verbose,
+        precision=args.precision,
+        auto_cast=args.auto_cast,
+    )
+    print("start a warm-up run.")
     node_features = torch.load(args.input)
     track_ids = inference(node_features)
+
+    # time the inference function.
+    if args.timing:
+        import time
+
+        from tqdm import tqdm
+
+        start_time = time.time()
+        num_trials = 4
+        print("start timing...")
+        for _ in tqdm(range(num_trials)):
+            track_ids = inference(node_features)
+        print("average time per event", (time.time() - start_time) / num_trials)
     print("total tracks", np.sum(track_ids == -1))
