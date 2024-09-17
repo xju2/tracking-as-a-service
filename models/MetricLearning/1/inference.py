@@ -159,6 +159,7 @@ class MetricLearningInference:
         if debug:
             print(f"after embedding, shape = {embedding.shape}")
             print("embedding data", embedding[0])
+            print("embedding data type", embedding.dtype)
             out_data = Data(embedding=embedding)
 
         # delete the embedding inputs if not needed.
