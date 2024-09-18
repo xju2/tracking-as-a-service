@@ -49,6 +49,7 @@ class MetricLearningInferenceConfig:
     model_path: str | Path
     device: str
     auto_cast: bool
+    compling: bool
     debug: bool
     r_max: float
     k_max: int
@@ -89,9 +90,19 @@ class MetricLearningInference:
         filtering_path = self.config.model_path / "filter.pt"
         gnn_path = self.config.model_path / "gnn.pt"
 
-        self.embedding_model = torch.jit.load(embedding_path).to(self.config.device)
-        self.filter_model = torch.jit.load(filtering_path).to(self.config.device)
-        self.gnn_model = torch.jit.load(gnn_path).to(self.config.device)
+        self.embedding_model = (
+            torch.jit.load(embedding_path).to(self.config.device, non_blocking=True).eval()
+        )
+        self.filter_model = (
+            torch.jit.load(filtering_path).to(self.config.device, non_blocking=True).eval()
+        )
+        self.gnn_model = torch.jit.load(gnn_path).to(self.config.device, non_blocking=True).eval()
+
+        if self.config.compling:
+            self.embedding_model = torch.compile(self.embedding_model)
+            self.filter_model.gnn = torch.compile(self.filter_model.gnn)
+            self.filter_model.net = torch.compile(self.filter_model.net)
+            self.gnn_model = torch.compile(self.gnn_model)
 
         self.input_node_features = [
             "r",
@@ -347,12 +358,13 @@ class MetricLearningInference:
 
 
 def create_metric_learning_end2end_rel24(
-    model_path: str, device: str, debug: bool, precision: str, auto_cast: bool
+    model_path: str, device: str, debug: bool, precision: str, auto_cast: bool, compiling: bool
 ):
     config = MetricLearningInferenceConfig(
         model_path=model_path,
         device=device,
         auto_cast=auto_cast,
+        compling=compiling,
         debug=debug,
         r_max=0.12,
         k_max=1000,
@@ -385,6 +397,7 @@ if __name__ == "__main__":
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")
     parser.add_argument("-d", "--device", default="cuda", help="Device")
     parser.add_argument("-t", "--timing", action="store_true", help="Time the inference")
+    parser.add_argument("-c", "--compiling", action="store_true", help="Use compiling")
 
     args = parser.parse_args()
     if not Path(args.model).exists():
@@ -396,6 +409,7 @@ if __name__ == "__main__":
         debug=args.verbose,
         precision=args.precision,
         auto_cast=args.auto_cast,
+        compiling=args.compiling,
     )
     print("start a warm-up run.")
     node_features = torch.load(args.input)

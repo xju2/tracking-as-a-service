@@ -1,6 +1,8 @@
 import torch
 from torch_geometric.utils import sort_edge_index
 
+dtype = torch.float16
+
 
 def check_autocast_support(device_type: str):
     if torch.__version__ < "2.4.0":
@@ -13,7 +15,7 @@ def run_torch_model(model: torch.nn.Module, auto_cast: bool, *inputs):
     with torch.no_grad():
         device_type = inputs[0].device.type
         if auto_cast and check_autocast_support(device_type):
-            with torch.autocast(device_type):
+            with torch.autocast(device_type, dtype=dtype):
                 output = model(*inputs)
         else:
             output = model(*inputs)
@@ -31,7 +33,7 @@ def run_gnn_filter(
         sorted_edge_index = sort_edge_index(edge_index, sort_by_row=False)
         device_type = x.device.type
         if auto_cast and check_autocast_support(device_type):
-            with torch.autocast(device_type):
+            with torch.autocast(device_type, dtype=dtype):
                 gnn_embedding = model.gnn(x, sorted_edge_index)
                 filter_scores = [
                     model.net(
