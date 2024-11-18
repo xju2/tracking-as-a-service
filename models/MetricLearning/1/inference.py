@@ -51,19 +51,19 @@ class MetricLearningInferenceConfig:
     auto_cast: bool
     compling: bool
     debug: bool
-    r_max: float
-    k_max: int
-    filter_cut: float
-    filter_batches: int
-    cc_cut: float
-    walk_min: float
-    walk_max: float
-    embedding_node_features: str
-    embedding_node_scale: str
-    filter_node_features: str
-    filter_node_scale: str
-    gnn_node_features: str
-    gnn_node_scale: str
+    r_max: float = 0.12
+    k_max: int = 1000
+    filter_cut: float = 0.05
+    filter_batches: int = 10
+    cc_cut: float = 0.01
+    walk_min: float = 0.1
+    walk_max: float = 0.6
+    embedding_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2"  # noqa: E501
+    embedding_node_scale: str = "1000, 3.14, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14"  # noqa: E501
+    filter_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2"  # noqa: E501
+    filter_node_scale: str = "1000, 3.14, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14, 1, 1, 3.14, 3.14, 1, 1, 1, 1, 1, 1, 3.14, 3.14, 3.14, 3.14"  # noqa: E501
+    gnn_node_features: str = "r, phi, z, eta, cluster_r_1, cluster_phi_1, cluster_z_1, cluster_eta_1, cluster_r_2, cluster_phi_2, cluster_z_2, cluster_eta_2"  # noqa: E501
+    gnn_node_scale: str = "1000.0, 3.14159265359, 1000.0, 1.0, 1000.0, 3.14159265359, 1000.0, 1.0, 1000.0, 3.14159265359, 1000.0, 1.0"  # noqa: E501
 
     def __post_init__(self):
         self.embedding_node_features = [x.strip() for x in self.embedding_node_features.split(",")]
@@ -86,6 +86,7 @@ class MetricLearningInferenceConfig:
 class MetricLearningInference:
     def __init__(self, config: MetricLearningInferenceConfig):
         self.config = config
+        print(self.config)
         embedding_path = self.config.model_path / "embedding.pt"
         filtering_path = self.config.model_path / "filter.pt"
         gnn_path = self.config.model_path / "gnn.pt"
@@ -99,10 +100,11 @@ class MetricLearningInference:
         self.gnn_model = torch.jit.load(gnn_path).to(self.config.device, non_blocking=True).eval()
 
         if self.config.compling:
-            self.embedding_model = torch.compile(self.embedding_model)
-            self.filter_model.gnn = torch.compile(self.filter_model.gnn)
-            self.filter_model.net = torch.compile(self.filter_model.net)
-            self.gnn_model = torch.compile(self.gnn_model)
+            print("compling models do not work now...")
+            # self.embedding_model = torch.compile(self.embedding_model)
+            # self.filter_model.gnn = torch.compile(self.filter_model.gnn)
+            # self.filter_model.net = torch.compile(self.filter_model.net)
+            # self.gnn_model = torch.compile(self.gnn_model)
 
         self.input_node_features = [
             "r",

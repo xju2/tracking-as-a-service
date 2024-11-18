@@ -8,7 +8,7 @@ import torch
 import triton_python_backend_utils as pb_utils
 from torch.utils.dlpack import from_dlpack
 
-from .inference import MetricLearningInference
+from .inference import MetricLearningInference, MetricLearningInferenceConfig
 
 os.environ["RAPIDS_NO_INITIALIZE"] = "1"
 
@@ -49,18 +49,18 @@ class TritonPythonModel:
             return parameters[name]["string_value"]
 
         model_path = Path(args["model_repository"]) / args["model_version"]
-        self.inference = MetricLearningInference(
-            model_path,
-            float(get_parameter("r_max")),
-            int(get_parameter("k_max")),
-            float(get_parameter("filter_cut")),
-            int(get_parameter("filter_batches")),
-            float(get_parameter("cc_cut")),
-            float(get_parameter("walk_min")),
-            float(get_parameter("walk_max")),
-            "cuda" if torch.cuda.is_available() else "cpu",
-            self.debug,
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        auto_cast = get_parameter("auto_cast").lower() == "true"
+        compling = get_parameter("compling").lower() == "true"
+        config = MetricLearningInferenceConfig(
+            model_path=model_path,
+            device=device,
+            auto_cast=auto_cast,
+            compling=compling,
+            debug=self.debug,
         )
+
+        self.inference = MetricLearningInference(config)
 
         # Get OUTPUT0 configuration
         output0_config = pb_utils.get_output_config_by_name(model_config, "LABELS")
