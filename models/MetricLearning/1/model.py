@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 import torch
 import triton_python_backend_utils as pb_utils
 from torch.utils.dlpack import from_dlpack
@@ -48,6 +49,7 @@ class TritonPythonModel:
                 raise ValueError(f"Parameter {name} is required but not provided.")
             return parameters[name]["string_value"]
 
+        self.save_event = get_parameter("save_event").lower() == "true"
         model_path = Path(args["model_repository"]) / args["model_version"]
         device = "cuda" if torch.cuda.is_available() else "cpu"
         auto_cast = get_parameter("auto_cast").lower() == "true"
@@ -102,9 +104,14 @@ class TritonPythonModel:
                 print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
 
             # Run inference
-            if self.debug:
+            if self.save_event:
                 torch.save(features, "node_features_for_metriclearning.pt")
-            track_ids = self.inference(features)
+
+            track_ids = (
+                self.inference(features)
+                if features.shape[0] > 0
+                else np.array([-1], dtype=np.int64)
+            )
 
             if self.debug:
                 print(f"output shape: {track_ids.shape}")

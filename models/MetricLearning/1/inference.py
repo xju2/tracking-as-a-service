@@ -157,6 +157,7 @@ class MetricLearningInference:
     def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
         device = self.config.device
         debug = self.config.debug
+        track_candidates = np.array([-1], dtype=np.int64)
 
         node_features = node_features.to(device).float()
         if hit_id is None:
@@ -189,13 +190,14 @@ class MetricLearningInference:
         edge_index = build_edges(
             embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
-        if edge_index.shape[1] == 0:
-            return torch.full((1,), -1, dtype=torch.long, device=device)
 
         if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
         else:
             del embedding
+
+        if edge_index.shape[1] == 0:
+            return track_candidates
 
         # make it undirected and remove duplicates.
         edge_index[:, edge_index[0] > edge_index[1]] = edge_index[
@@ -329,9 +331,9 @@ class MetricLearningInference:
         all_trkx["cc"], G = get_simple_path(G)
         if debug:
             print("the graph information")
-            with open("graph_info.txt", "w") as f:
-                f.write(f"{G.nodes(data=True)}\n")
-                f.write(f"{G.edges(data=True)}\n")
+            # with open("graph_info.txt", "w") as f:
+            #     f.write(f"{G.nodes(data=True)}\n")
+            #     f.write(f"{G.edges(data=True)}\n")
         all_trkx["walk"] = get_tracks(G, self.config.walk_min, self.config.walk_max, score_name)
         if debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
@@ -346,13 +348,13 @@ class MetricLearningInference:
             item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
         ])
         # write candidates to a file.
-        if debug:
-            out_str = [
-                "".join([f"{item} " for item in track]) + "\n"
-                for track in all_trkx["cc"] + all_trkx["walk"]
-            ]
-            with open("track_candidates.txt", "w") as f:
-                f.writelines(out_str)
+        # if debug:
+        #     out_str = [
+        #         "".join([f"{item} " for item in track]) + "\n"
+        #         for track in all_trkx["cc"] + all_trkx["walk"]
+        #     ]
+        #     with open("track_candidates.txt", "w") as f:
+        #         f.writelines(out_str)
         return track_candidates
 
     def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):

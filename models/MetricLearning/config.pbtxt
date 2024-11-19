@@ -37,5 +37,10 @@ parameters: {
 
 parameters: {
   key: "debug",
+  value: {string_value: "True"}
+}
+
+parameters: {
+  key: "save_event",
   value: {string_value: "False"}
 }
