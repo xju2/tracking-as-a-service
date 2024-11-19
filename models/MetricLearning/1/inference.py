@@ -348,7 +348,8 @@ class MetricLearningInference:
             item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
         ])
         # write candidates to a file.
-        # if debug:
+        if debug:
+            print("track_candidates", track_candidates[:20])
         #     out_str = [
         #         "".join([f"{item} " for item in track]) + "\n"
         #         for track in all_trkx["cc"] + all_trkx["walk"]

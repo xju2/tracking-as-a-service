@@ -109,7 +109,7 @@ class TritonPythonModel:
 
             track_ids = (
                 self.inference(features)
-                if features.shape[0] > 0
+                if features.shape[0] > 2
                 else np.array([-1], dtype=np.int64)
             )
 
