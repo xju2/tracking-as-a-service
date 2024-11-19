@@ -41,7 +41,7 @@ class TritonPythonModel:
         parameters = model_config["parameters"]
         self.debug = False
         if "debug" in parameters:
-            self.debug = parameters["debug"]["string_value"] == "true"
+            self.debug = parameters["debug"]["string_value"].lower() == "true"
 
         def get_parameter(name):
             if name not in parameters:
