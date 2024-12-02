@@ -51,6 +51,7 @@ class MetricLearningInferenceConfig:
     auto_cast: bool
     compling: bool
     debug: bool
+    save_debug_data: bool = False
     r_max: float = 0.12
     k_max: int = 1000
     filter_cut: float = 0.05
@@ -157,6 +158,9 @@ class MetricLearningInference:
     def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
         device = self.config.device
         debug = self.config.debug
+        save_debug_data = self.config.save_debug_data
+        out_debug_data_name = "debug_data.pt"
+
         track_candidates = np.array([-1], dtype=np.int64)
 
         node_features = node_features.to(device).float()
@@ -174,6 +178,7 @@ class MetricLearningInference:
             print(f"after embedding, shape = {embedding.shape}")
             print("embedding data", embedding[0])
             print("embedding data type", embedding.dtype)
+        if save_debug_data:
             out_data = Data(embedding=embedding)
 
         # delete the embedding inputs if not needed.
@@ -186,6 +191,9 @@ class MetricLearningInference:
             ]
             filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
 
+        if save_debug_data:
+            out_data.filtering_nodes = filtering_inputs
+
         # Build edges
         edge_index = build_edges(
             embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
@@ -196,7 +204,12 @@ class MetricLearningInference:
         else:
             del embedding
 
+        if save_debug_data:
+            out_data.embedding_edge_list = edge_index
+
         if edge_index.shape[1] == 0:
+            if save_debug_data:
+                torch.save(out_data, out_debug_data_name)
             return track_candidates
 
         # make it undirected and remove duplicates.
@@ -212,6 +225,9 @@ class MetricLearningInference:
         if debug:
             print("after removing duplications: ", edge_index.shape, edge_index[:, 0])
 
+        if save_debug_data:
+            out_data.filter_edge_list_before = edge_index
+
         # GNNFiltering
         edge_scores, edge_index, _ = run_gnn_filter(
             self.filter_model,
@@ -224,8 +240,10 @@ class MetricLearningInference:
         if debug:
             print("edge_score", edge_scores[:10])
             print("edge_index", edge_index[:, :10])
-            out_data.edge_index = edge_index
-            out_data.edge_scores = edge_scores
+
+        if save_debug_data:
+            out_data.filter_scores = edge_scores
+            out_data.filter_edge_list_after = edge_index
 
         # apply fitlering score cuts.
         edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
@@ -234,9 +252,11 @@ class MetricLearningInference:
         if debug:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
 
+        # flip the edges to make it directed for GNN
         edge_index[:, edge_index[0] > edge_index[1]] = edge_index[
             :, edge_index[0] > edge_index[1]
         ].flip(0)
+
         # prepare GNN inputs
         gnn_input = node_features[
             :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
@@ -297,11 +317,12 @@ class MetricLearningInference:
         # CC and Walkthrough
         if debug:
             print("After GNN...")
+
+        if save_debug_data:
             out_data.gnn_scores = edge_scores
-            out_data.gnn_input_edges = edge_index
+            out_data.gnn_edge_lists = edge_index
             out_data.gnn_edge_features = edge_features
             out_data.gnn_node_features = gnn_input
-            torch.save(out_data, "debug.pt")
 
         # rearrange the edges by their distances from collision point.
         R = (
@@ -319,6 +340,10 @@ class MetricLearningInference:
             edge_scores=edge_scores,
         )
         G = to_networkx(graph, ["hit_id"], [score_name], to_undirected=False)
+
+        if save_debug_data:
+            gragh_viz = nx.nx_agraph.to_agraph(G)  # convert to a graphviz graph
+            gragh_viz.write("debug_graph.dot")
 
         # Remove edges below threshold
         list_fake_edges = [
@@ -347,15 +372,14 @@ class MetricLearningInference:
         track_candidates = np.array([
             item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
         ])
+
         # write candidates to a file.
         if debug:
             print("track_candidates", track_candidates[:20])
-        #     out_str = [
-        #         "".join([f"{item} " for item in track]) + "\n"
-        #         for track in all_trkx["cc"] + all_trkx["walk"]
-        #     ]
-        #     with open("track_candidates.txt", "w") as f:
-        #         f.writelines(out_str)
+        if save_debug_data:
+            out_data.track_candidates = torch.from_numpy(track_candidates, dtype=torch.int64)
+            torch.save(out_data, out_debug_data_name)
+
         return track_candidates
 
     def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
