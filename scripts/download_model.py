@@ -10,9 +10,9 @@ def download():
     print("Downloading models from NERSC portal...")
 
     # use tqdm to show the download progress.
-    # the file is located at https://portal.nersc.gov/cfs/m3443/xju/trition_server
+    # the file is located at https://portal.nersc.gov/cfs/m3443/xju/triton_server
 
-    file_base_url = "https://portal.nersc.gov/cfs/m3443/xju/trition_server/"
+    file_base_url = "https://portal.nersc.gov/cfs/m3443/xju/triton_server/"
     file_dirs = ["GNN4Pixel", "MetricLearning"]
     version = "1"
 

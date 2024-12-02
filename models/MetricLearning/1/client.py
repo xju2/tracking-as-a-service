@@ -76,9 +76,14 @@ if __name__ == "__main__":
     import argparse
 
     args = argparse.ArgumentParser()
-    args.add_argument("-s", "--server", type=str, default="localhost")
-    args.add_argument("-p", "--port", type=int, default=8001)
     args.add_argument("-i", "--input", type=str, default="node_features.pt")
     args = args.parse_args()
 
-    test_ExaTrkX(args.server, args.port, args.input)
+    # find the server ID and use the port for gRPC.
+    this_file_location = Path(__file__).resolve()
+    node_file = this_file_location.parent.parent.parent.parent / "jobs" / "node_id.txt"
+    server = node_file.read_text().strip()
+    port = 8001
+    print(f"Using server {server} with port {port}.")
+
+    test_ExaTrkX(server, port, args.input)

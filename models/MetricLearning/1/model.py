@@ -60,6 +60,7 @@ class TritonPythonModel:
             auto_cast=auto_cast,
             compling=compling,
             debug=self.debug,
+            save_debug_data=self.save_event,
         )
 
         self.inference = MetricLearningInference(config)
@@ -102,10 +103,6 @@ class TritonPythonModel:
             features = from_dlpack(features.to_dlpack()).to(self.model_instance_device_id)
             if self.debug:
                 print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
-
-            # Run inference
-            if self.save_event:
-                torch.save(features, "node_features_for_metriclearning.pt")
 
             track_ids = (
                 self.inference(features)

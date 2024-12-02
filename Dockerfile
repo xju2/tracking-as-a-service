@@ -21,12 +21,14 @@ RUN apt-get update -y && apt-get install -y \
     rapidjson-dev \
     libexpat-dev libeigen3-dev libftgl-dev libgl2ps-dev libglew-dev libgsl-dev \
     liblz4-dev liblzma-dev libx11-dev libxext-dev libxft-dev libxpm-dev libxerces-c-dev \
-    libzstd-dev ccache libb64-dev \
-  && apt-get clean -y
+    libzstd-dev ccache libb64-dev graphviz graphviz-dev \
+  && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
 RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN pip3 install --upgrade pip
-RUN pip3 install -U pandas matplotlib seaborn
+RUN pip3 install -U pandas matplotlib seaborn git+https://github.com/LAL/trackml-library.git \
+pyyaml click pytest pytest-cov class-resolver scipy pandas matplotlib uproot tqdm \
+ipykernel atlasify networkx seaborn wandb pygraphviz tritonclient[all]
 
 # Environment variables
 ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib:/usr/local/lib"
@@ -105,74 +107,9 @@ RUN cd /tmp/ && mkdir src \
 
 RUN pip3 install torch_geometric lightning>=2.2
 
-# root v6.24.06
-# RUN cd /tmp && rm -rf src build && mkdir -p src \
-#   && ${GET} https://root.cern/download/root_v6.24.06.source.tar.gz \
-#     | ${UNPACK_TO_SRC} \
-#   && cmake -B build -S src -GNinja \
-#     -DCMAKE_BUILD_TYPE=Release \
-#     -DCMAKE_CXX_STANDARD=17 \
-#     -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-#     -Dfail-on-missing=ON \
-#     -Dgminimal=ON \
-#     -Dgdml=ON \
-#     -Dopengl=ON \
-#     -Dpyroot=ON \
-#   && cmake --build build -- install -j 20\
-#   && rm -rf build src
-
 # Rapids AI
 # cudf-cu12 dask-cudf-cu12 cuml-cu12 cugraph-cu12 cuspatial-cu12 cuproj-cu12 cuxfilter-cu12 cucim
 RUN pip3 install --extra-index-url=https://pypi.nvidia.com cudf-cu12 cugraph-cu12 nx-cugraph-cu12
 
-
 # Onnx (download of tar.gz does not work out of the box, since the build.sh script requires a git repository)
 RUN pip3 install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
-
-# RUN git clone https://github.com/microsoft/onnxruntime src \
-#   && (cd src && git checkout v1.13.1) \
-#   && ./src/build.sh \
-#     --config MinSizeRel \
-#     --build_shared_lib \
-#     --build_dir build \
-#     --use_cuda \
-#     --cuda_home /usr/local/cuda \
-#     --cudnn_home /usr/local/cuda \
-#     --parallel 8 \
-#     --skip_tests \
-#     --cmake_extra_defines \
-#       CMAKE_INSTALL_PREFIX=${PREFIX} \
-#       CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
-#   && cmake --build build/MinSizeRel -- install -j 20 \
-#   && rm -rf build src
-
-# faiss v1.7.4
-# RUN cd /tmp && rm -rf src && mkdir -p src \
-#   && ${GET} https://github.com/facebookresearch/faiss/archive/refs/tags/v1.7.4.tar.gz \
-#     | ${UNPACK_TO_SRC} \
-#   && cd src && mkdir build && cd build \
-#   && cmake .. -DFAISS_ENABLE_GPU=ON -DFAISS_ENABLE_PYTHON=ON \
-#         -DFAISS_ENABLE_C_API=ON -DBUILD_SHARED_LIBS=ON \
-#         -DCMAKE_CUDA_ARCHITECTURES=${TORCH_CUDA_ARCH_LIST} \
-#         -DPython_EXECUTABLE=/usr/bin/python -DPython_LIBRARIES=/usr/lib/python3.10 \
-#         -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-#   && make -j8 faiss && make -j8 swigfaiss \
-#   && cd faiss/python && pip3 install . \
-#   && cd ../.. && make install -j8 && cd .. \
-#   && rm -rf src
-
-# # Install grpc
-# RUN git clone --recurse-submodules -b v1.64.1 --depth 1 https://github.com/grpc/grpc src\
-#     && cmake -B build -S src -DgRPC_INSTALL=ON \
-#         -DgRPC_BUILD_TESTS=OFF \
-#         -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-#         -DCMAKE_BUILD_TYPE=Release \
-#     && cmake --build build -- install -j20 \
-#     && rm -rf src build
-
-# install triton client
-RUN pip3 install tritonclient[all]
-
-# additional Python package needed for acorn
-RUN pip3 install git+https://github.com/LAL/trackml-library.git \
-pyyaml click pytest pytest-cov class-resolver scipy pandas matplotlib uproot tqdm ipykernel atlasify networkx seaborn wandb
