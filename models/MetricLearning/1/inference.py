@@ -377,7 +377,7 @@ class MetricLearningInference:
         if debug:
             print("track_candidates", track_candidates[:20])
         if save_debug_data:
-            out_data.track_candidates = torch.from_numpy(track_candidates, dtype=torch.int64)
+            out_data.track_candidates = torch.from_numpy(track_candidates).to(torch.int64)
             torch.save(out_data, out_debug_data_name)
 
         return track_candidates

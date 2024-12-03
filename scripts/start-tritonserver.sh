@@ -2,7 +2,7 @@
 
 WORK_DIR="$( dirname "${BASH_SOURCE[0]}" )/../"
 TRITON_MODELS="${WORK_DIR}/models"
-TRITON_IMAGE="docexoty/tritonserver:latest"
+TRITON_IMAGE="docker.io/docexoty/tritonserver:latest"
 
 TRITON_JOBS_DIR="${WORK_DIR}/jobs"
 TRITON_LOGS=$TRITON_JOBS_DIR/$SLURM_JOB_ID
