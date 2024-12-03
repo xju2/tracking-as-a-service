@@ -1,6 +1,7 @@
 #!/bin/bash
 
 WORK_DIR="$( dirname "${BASH_SOURCE[0]}" )/../"
+WORK_DIR=$(readlink -f $WORK_DIR)
 TRITON_MODELS="${WORK_DIR}/models"
 TRITON_IMAGE="docker.io/docexoty/tritonserver:latest"
 
@@ -24,7 +25,8 @@ fi
 #Start Triton
 echo "[slurm] starting $TRITON_SEVER_NAME"
 podman-hpc run -it --rm --gpu --shm-size=20GB -p 8002:8002 -p 8001:8001 -p 8000:8000 \
-    --volume="$TRITON_MODELS:/models" \
+    --volume="$TRITON_MODELS:/models" -w $TRITON_LOGS \
+    -v $WORK_DIR:$WORK_DIR \
     $TRITON_IMAGE \
     tritonserver \
         --model-repository=/models \
