@@ -1,5 +1,9 @@
 ## Metric Learning Pipeline For ITk
 
+### Debugging data
+Debugging data is created when `save_event` is enabled. The data is saved in `/global/cfs/cdirs/m3443/usr/xju/ITk/For2023Paper/metric_learning_testing/debug`
+and copied in this directory.
+
 ### Local Testing.
 
 To start the server
