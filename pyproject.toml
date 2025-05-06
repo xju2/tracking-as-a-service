@@ -19,13 +19,3 @@ extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
-
-[tool.hatch.envs.dev]
-dependencies = [
-    "hatch",
-    "pre-commit",
-    "ruff",
-    "jupyterlab",
-    "matplotlib",
-    "pydantic",
-]

@@ -165,6 +165,8 @@ class MetricLearningInference:
         track_candidates = np.array([-1], dtype=np.int64)
 
         node_features = node_features.to(device).float()
+        node_features = torch.nan_to_num(node_features, nan=0.0, posinf=0.0, neginf=0.0)
+
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=device)
 
