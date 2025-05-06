@@ -1,5 +1,9 @@
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.ruff]
-line-length = 100
+line-length = 99
 preview = true
 lint.select = ["ALL"]
 lint.ignore = [
@@ -14,7 +18,7 @@ lint.ignore = [
 extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint.pydocstyle]
-convention = "numpy"
+convention = "google"
 
 [tool.hatch.envs.dev]
 dependencies = [

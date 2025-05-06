@@ -20,3 +20,8 @@ podman-hpc run -it --rm --ipc=host --net=host --ulimit memlock=-1 --ulimit stack
 cd models/MetricLearning/1
 python client.py -i event000006800_node_features.pt
 ```
+
+### Versioning
+
+1: the filtering stage is with the random flipping.
+2: re-trained the filtering and GNN stages without the random flipping.

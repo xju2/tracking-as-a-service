@@ -2,7 +2,6 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
-    - id: check-added-large-files
     - id: check-case-conflict
     - id: check-merge-conflict
     - id: check-symlinks
@@ -34,9 +33,3 @@ repos:
         args: [ --fix ]
       # Run the formatter.
       - id: ruff-format
-
-  - repo: https://github.com/lk16/detect-missing-init
-    rev: v0.1.6
-    hooks:
-    - id: detect-missing-init
-      args: ['--create', "--python-folders", "acorn"]  # See the arguments section
