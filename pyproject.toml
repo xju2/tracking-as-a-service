@@ -5,17 +5,22 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 line-length = 99
 preview = true
-lint.select = ["ALL"]
-lint.ignore = [
+exclude = ["*.ipynb"]
+
+[tool.ruff.format]
+docstring-code-format = true
+quote-style = "double"
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint]
+ignore = [
     "D100", "D101", "D102", "D103", "D104", "D105", "D205", "D401", "D203", "D213", "D107", "D413",
     "S101", "S404", "S602", "S403", "S105", "S301", "PLR2004", "PLR0912", "PLR0913",
     "PLR0914", "PLR0915", "PLR0917", "PLC0415", "PLW1514", "PLR6301", "PLR1702", "PLR0904",
     "F401", "E501", "PD901", "C901", "I001", "COM", "EM", "FIX", "FBT", "G004",
     "N802", "N803", "N806", "N812", "T201", "PTH123", "RUF015", "RUF017", "ERA", "ISC001",
-    "RET504", "SLF001", "TCH003", "TD003", "ARG002", "N999", "TRY201", "TRY003",
-    "ANN", "CPY", "INP001"
+    "RET504", "SLF001",
+    "TD003", "ARG002", "N999", "TRY201", "TRY003", "ANN", "CPY", "INP001"
 ]
-extend-exclude = ["*.ipynb"]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
