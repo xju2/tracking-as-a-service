@@ -182,7 +182,9 @@ class MetricLearningInference:
             print("embedding data", embedding[0])
             print("embedding data type", embedding.dtype)
         if save_debug_data:
-            out_data = Data(embedding=embedding, node_features=node_features)
+            out_data = Data(
+                embedding_inputs=embedding_inputs, embedding=embedding, node_features=node_features
+            )
 
         # delete the embedding inputs if not needed.
         if self.config.filter_node_features == self.config.embedding_node_features:
@@ -233,7 +235,7 @@ class MetricLearningInference:
             out_data.filter_edge_list_before = edge_index
 
         # GNNFiltering
-        edge_scores, _ = run_gnn_filter(
+        edge_scores, edge_index, _ = run_gnn_filter(
             self.filter_model,
             self.config.auto_cast,
             self.config.filter_batches,
@@ -246,6 +248,7 @@ class MetricLearningInference:
             print("edge_index", edge_index[:, :10])
 
         if save_debug_data:
+            out_data.filter_node_features = filtering_inputs
             out_data.filter_scores = edge_scores
             out_data.filter_edge_list_after = edge_index
 
@@ -323,9 +326,9 @@ class MetricLearningInference:
         )
         G = to_networkx(graph, ["hit_id"], [score_name], to_undirected=False)
 
-        if save_debug_data:
-            gragh_viz = nx.nx_agraph.to_agraph(G)  # convert to a graphviz graph
-            gragh_viz.write("debug_graph.dot")
+        # if save_debug_data:
+        #     gragh_viz = nx.nx_agraph.to_agraph(G)  # convert to a graphviz graph
+        #     gragh_viz.write("debug_graph.dot")
 
         # Remove edges below threshold
         list_fake_edges = [
@@ -369,7 +372,13 @@ class MetricLearningInference:
 
 
 def create_metric_learning_end2end_rel24(
-    model_path: str, device: str, debug: bool, precision: str, auto_cast: bool, compiling: bool
+    model_path: str,
+    device: str,
+    debug: bool,
+    precision: str,
+    auto_cast: bool,
+    compiling: bool,
+    save_data_for_debug: bool,
 ):
     config = MetricLearningInferenceConfig(
         model_path=model_path,
@@ -377,6 +386,7 @@ def create_metric_learning_end2end_rel24(
         auto_cast=auto_cast,
         compling=compiling,
         debug=debug,
+        save_debug_data=save_data_for_debug,
         r_max=0.12,
         k_max=1000,
         filter_cut=0.05,
@@ -409,6 +419,9 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--device", default="cuda", help="Device")
     parser.add_argument("-t", "--timing", action="store_true", help="Time the inference")
     parser.add_argument("-c", "--compiling", action="store_true", help="Use compiling")
+    parser.add_argument(
+        "-s", "--save-data-for-debug", action="store_true", help="Save debugging data"
+    )
 
     args = parser.parse_args()
     if not Path(args.model).exists():
@@ -421,6 +434,7 @@ if __name__ == "__main__":
         precision=args.precision,
         auto_cast=args.auto_cast,
         compiling=args.compiling,
+        save_data_for_debug=args.save_data_for_debug,
     )
     print("start a warm-up run.")
     node_features = torch.load(args.input)
