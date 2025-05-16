@@ -6,6 +6,43 @@ from functools import partial
 import networkx as nx
 
 
+def remove_cycles(graph):
+    """
+    Remove cycles from the graph, simply by pointing all edges outwards
+    """
+
+    R = graph.hit_r**2 + graph.hit_z**2
+    edge_flip_mask = (R[graph.edge_index[0]] > R[graph.edge_index[1]]) | (
+        (R[graph.edge_index[0]] == R[graph.edge_index[1]])
+        & (graph.edge_index[0] > graph.edge_index[1])
+    )
+    graph.edge_index[:, edge_flip_mask] = graph.edge_index[:, edge_flip_mask].flip(0)
+
+    return graph
+
+
+def topological_sort_graph(G):
+    """
+    Sort Topologcially the graph such node u appears befroe v if the connection is u->v
+    This ordering is valid only if the graph has no directed cycles
+    """
+    H = nx.DiGraph()
+    # Add nodes w/o any features attached
+    # maybe this is not needed given line 48?
+    H.add_nodes_from(nx.topological_sort(G))
+
+    # put it after the add nodes
+    H.add_edges_from(G.edges(data=True))
+    sorted_nodes = []
+
+    # Add corresponding nodes features
+    for i in list(nx.topological_sort(G)):
+        sorted_nodes.append((i, G.nodes[i]))
+    H.add_nodes_from(sorted_nodes)
+
+    return H
+
+
 def find_next_hits(
     G: nx.DiGraph,
     current_hit: int,
