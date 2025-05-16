@@ -10,7 +10,7 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.utils import to_networkx
 from torch_model_inference import run_gnn_filter, run_torch_model
-from walkthrough import get_simple_path, get_tracks
+import walkthrough as walkutils
 
 torch.manual_seed(42)
 
@@ -90,9 +90,14 @@ class MetricLearningInference:
     def __init__(self, config: MetricLearningInferenceConfig):
         self.config = config
         print(self.config)
-        embedding_path = self.config.model_path / "embedding.pt"
-        filtering_path = self.config.model_path / "filter.pt"
-        gnn_path = self.config.model_path / "gnn.pt"
+        model_path = (
+            Path(self.config.model_path)
+            if not isinstance(self.config.model_path, Path)
+            else self.config.model_path
+        )
+        embedding_path = model_path / "embedding.pt"
+        filtering_path = model_path / "filter.pt"
+        gnn_path = model_path / "gnn.pt"
 
         self.embedding_model = (
             torch.jit.load(embedding_path).to(self.config.device, non_blocking=True).eval()
@@ -181,6 +186,8 @@ class MetricLearningInference:
             print(f"after embedding, shape = {embedding.shape}")
             print("embedding data", embedding[0])
             print("embedding data type", embedding.dtype)
+
+        out_data = Data()
         if save_debug_data:
             out_data = Data(
                 embedding_inputs=embedding_inputs, embedding=embedding, node_features=node_features
@@ -319,7 +326,7 @@ class MetricLearningInference:
 
         score_name = "edge_scores"
         graph = Data(
-            x=node_features,
+            x=node_features[:, self.input_node_features.index("r")],
             edge_index=edge_index,
             hit_id=hit_id,
             edge_scores=edge_scores,
@@ -338,13 +345,15 @@ class MetricLearningInference:
         G.remove_nodes_from(list(nx.isolates(G)))
 
         all_trkx = {}
-        all_trkx["cc"], G = get_simple_path(G)
+        all_trkx["cc"], G = walkutils.get_simple_path(G)
         if debug:
             print("the graph information")
             # with open("graph_info.txt", "w") as f:
             #     f.write(f"{G.nodes(data=True)}\n")
             #     f.write(f"{G.edges(data=True)}\n")
-        all_trkx["walk"] = get_tracks(G, self.config.walk_min, self.config.walk_max, score_name)
+        all_trkx["walk"] = walkutils.get_tracks(
+            G, self.config.walk_min, self.config.walk_max, score_name
+        )
         if debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
             print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
