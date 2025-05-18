@@ -8,7 +8,9 @@ import networkx as nx
 import numpy as np
 import torch
 from torch_geometric.data import Data
+from torch_geometric.transforms import RemoveIsolatedNodes
 from torch_geometric.utils import to_networkx
+
 from torch_model_inference import run_gnn_filter, run_torch_model
 import walkthrough as walkutils
 
@@ -324,25 +326,22 @@ class MetricLearningInference:
             out_data.gnn_edge_features = edge_features
             out_data.gnn_node_features = gnn_input
 
+        good_edge_mask = edge_scores > self.config.cc_cut
+        edge_index = edge_index[:, good_edge_mask]
+        edge_scores = edge_scores[good_edge_mask]
+
         score_name = "edge_scores"
         graph = Data(
-            x=node_features[:, self.input_node_features.index("r")],
+            hit_r=node_features[:, self.input_node_features.index("r")],
+            hit_z=node_features[:, self.input_node_features.index("z")],
             edge_index=edge_index,
             hit_id=hit_id,
-            edge_scores=edge_scores,
+            num_nodes=node_features.shape[0],
         )
+        graph[score_name] = edge_scores
+        graph = RemoveIsolatedNodes()(graph)
+
         G = to_networkx(graph, ["hit_id"], [score_name], to_undirected=False)
-
-        # if save_debug_data:
-        #     gragh_viz = nx.nx_agraph.to_agraph(G)  # convert to a graphviz graph
-        #     gragh_viz.write("debug_graph.dot")
-
-        # Remove edges below threshold
-        list_fake_edges = [
-            (u, v) for u, v, e in G.edges(data=True) if e[score_name] <= self.config.cc_cut
-        ]
-        G.remove_edges_from(list_fake_edges)
-        G.remove_nodes_from(list(nx.isolates(G)))
 
         all_trkx = {}
         all_trkx["cc"], G = walkutils.get_simple_path(G)
