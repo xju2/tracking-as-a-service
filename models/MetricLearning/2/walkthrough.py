@@ -142,7 +142,7 @@ def build_roads(G, starting_node, next_hit_fn, used_hits: set) -> list[tuple]:
     return path
 
 
-def get_tracks(G, th_min, th_add, score_name):
+def walk_through(G, score_name, th_min, th_add, *args, **kwargs):
     """Run walkthrough and return subgraphs."""
     used_nodes = set()
     sub_graphs = []
