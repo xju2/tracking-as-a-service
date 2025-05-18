@@ -107,9 +107,10 @@ RUN cd /tmp/ && mkdir src \
 
 RUN pip3 install torch_geometric lightning>=2.2
 
-# Rapids AI
-# cudf-cu12 dask-cudf-cu12 cuml-cu12 cugraph-cu12 cuspatial-cu12 cuproj-cu12 cuxfilter-cu12 cucim
-RUN pip3 install --extra-index-url=https://pypi.nvidia.com cudf-cu12 cugraph-cu12 nx-cugraph-cu12
-
 # Onnx (download of tar.gz does not work out of the box, since the build.sh script requires a git repository)
 RUN pip3 install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+
+# Rapids AI
+# cudf-cu12 dask-cudf-cu12 cuml-cu12 cugraph-cu12 cuspatial-cu12 cuproj-cu12 cuxfilter-cu12 cucim
+RUN pip3 install --extra-index-url=https://pypi.nvidia.com cudf-cu12 cugraph-cu12 nx-cugraph-cu12 cugraph-pyg-cu12
+RUN pip install graph_segment
