@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from operator import itemgetter
 
 import frnn
 import networkx as nx
@@ -12,7 +13,7 @@ from torch_geometric.transforms import RemoveIsolatedNodes
 from torch_geometric.utils import to_networkx
 
 from torch_model_inference import run_gnn_filter, run_torch_model
-import walkthrough as walkutils
+import fastwalkthrough as walkutils
 
 torch.manual_seed(42)
 
@@ -332,39 +333,42 @@ class MetricLearningInference:
 
         score_name = "edge_scores"
         graph = Data(
-            hit_r=node_features[:, self.input_node_features.index("r")],
-            hit_z=node_features[:, self.input_node_features.index("z")],
+            R=R,
             edge_index=edge_index,
             hit_id=hit_id,
             num_nodes=node_features.shape[0],
-        )
+        ).to(device)
         graph[score_name] = edge_scores
         graph = RemoveIsolatedNodes()(graph)
 
-        G = to_networkx(graph, ["hit_id"], [score_name], to_undirected=False)
-
         all_trkx = {}
-        all_trkx["cc"], G = walkutils.get_simple_path(G)
+        all_trkx["cc"], graph = walkutils.get_simple_path(graph)
         if debug:
             print("the graph information")
             # with open("graph_info.txt", "w") as f:
             #     f.write(f"{G.nodes(data=True)}\n")
             #     f.write(f"{G.edges(data=True)}\n")
-        all_trkx["walk"] = walkutils.get_tracks(
-            G, self.config.walk_min, self.config.walk_max, score_name
+        all_trkx["walk"] = walkutils.walk_through(
+            graph, score_name, self.config.walk_min, self.config.walk_max, False
         )
         if debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
             print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
 
-        # sort each track by R.
-        for trk in all_trkx["cc"] + all_trkx["walk"]:
-            trk.sort(key=lambda x: R[x])
+        tracks = all_trkx["cc"] + list(all_trkx["walk"])
+        total_length = sum(len(trk) + 1 for trk in tracks)
+        track_candidates = np.empty(total_length, dtype=int)
 
-        # label each hits.
-        track_candidates = np.array([
-            item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
-        ])
+        i = 0
+        for trk in tracks:
+            trk_tensor = torch.tensor(trk, device=R.device)
+            sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
+
+            n = len(sorted_trk)
+            track_candidates[i : i + n] = sorted_trk.cpu().tolist()
+            i += n
+            track_candidates[i] = -1
+            i += 1
 
         # write candidates to a file.
         if debug:

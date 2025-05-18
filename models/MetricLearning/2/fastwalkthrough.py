@@ -40,10 +40,15 @@ def filter_graph(graph, score_name, threshold):
 
 
 def process_components(graph, labels, large_component_labels):
-    in_degrees = torch.zeros(graph.num_nodes, dtype=torch.long)
-    out_degrees = torch.zeros(graph.num_nodes, dtype=torch.long)
-    in_degrees.index_add_(0, graph.edge_index[1], torch.ones(graph.num_edges, dtype=torch.long))
-    out_degrees.index_add_(0, graph.edge_index[0], torch.ones(graph.num_edges, dtype=torch.long))
+    device = graph.edge_index.device
+    in_degrees = torch.zeros(graph.num_nodes, dtype=torch.long, device=device)
+    out_degrees = torch.zeros(graph.num_nodes, dtype=torch.long, device=device)
+    in_degrees.index_add_(
+        0, graph.edge_index[1], torch.ones(graph.num_edges, dtype=torch.long, device=device)
+    )
+    out_degrees.index_add_(
+        0, graph.edge_index[0], torch.ones(graph.num_edges, dtype=torch.long, device=device)
+    )
 
     large_component_mask = torch.isin(labels, large_component_labels)
     small_component_mask = ~large_component_mask
@@ -89,7 +94,7 @@ def get_simple_path(graph):
     adj_matrix = to_scipy_sparse_matrix(graph.edge_index, num_nodes=graph.num_nodes)
 
     _, labels = connected_components(csgraph=adj_matrix, directed=True, connection="weak")
-    labels = torch.from_numpy(labels).long()
+    labels = torch.from_numpy(labels).long().to(graph.edge_index.device)
     graph.labels = labels
 
     unique_labels, counts = torch.unique(labels, return_counts=True)
@@ -288,11 +293,11 @@ def pyg_to_dict_numba(
 
 
 def convert_pyg_graph_to_numba(pyg_graph, score_name):
-    edge_index = pyg_graph.edge_index.numpy()
+    edge_index = pyg_graph.edge_index.cpu().numpy()
     edge_index_src = edge_index[0]
     edge_index_dst = edge_index[1]
-    edge_attr = pyg_graph[score_name].numpy()
-    hit_ids = pyg_graph.hit_id.numpy()
+    edge_attr = pyg_graph[score_name].cpu().numpy()
+    hit_ids = pyg_graph.hit_id.cpu().numpy()
 
     numba_edges = pyg_to_dict_numba(edge_index_src, edge_index_dst, edge_attr, hit_ids)
 
