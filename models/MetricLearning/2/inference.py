@@ -171,6 +171,8 @@ class MetricLearningInference:
         out_debug_data_name = "debug_data.pt"
 
         track_candidates = np.array([-1], dtype=np.int64)
+        if node_features is None or node_features.shape[0] < 3:
+            return track_candidates
 
         node_features = node_features.to(device).float()
         node_features = torch.nan_to_num(node_features, nan=0.0, posinf=0.0, neginf=0.0)
@@ -222,7 +224,7 @@ class MetricLearningInference:
         if save_debug_data:
             out_data.embedding_edge_list = edge_index
 
-        if edge_index.shape[1] == 0:
+        if edge_index.shape[1] < 2:
             if save_debug_data:
                 torch.save(out_data, out_debug_data_name)
             return track_candidates
@@ -265,6 +267,8 @@ class MetricLearningInference:
         # apply fitlering score cuts.
         edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
         del edge_scores
+        if edge_index.shape[1] < 2:
+            return track_candidates
 
         if debug:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
@@ -330,6 +334,7 @@ class MetricLearningInference:
         good_edge_mask = edge_scores > self.config.cc_cut
         edge_index = edge_index[:, good_edge_mask]
         edge_scores = edge_scores[good_edge_mask]
+        del good_edge_mask
 
         score_name = "edge_scores"
         graph = Data(

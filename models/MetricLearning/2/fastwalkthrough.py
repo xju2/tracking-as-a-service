@@ -169,6 +169,10 @@ def resolve_ambiguities(tracks, max_ambi_hits):
 def walk_through(graph, score_name, th_min, th_add, allow_node_reuse):
     graph = max_add_cuts(graph, score_name, th_min, th_add)
     numba_edges = convert_pyg_graph_to_numba(graph, score_name)
+
+    if len(numba_edges) < 1:
+        return []
+
     sorted_hit_ids = topological_sort_graph(graph, numba_edges=numba_edges)
     tracks = get_tracks(
         numba_edges,
