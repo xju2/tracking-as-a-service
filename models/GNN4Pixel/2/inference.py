@@ -54,8 +54,8 @@ class MetricLearningInference:
     def __init__(
         self,
         model_path: str,
-        r_max: float = 0.1,
-        k_max: int = 300,
+        r_max: float = 0.10,
+        k_max: int = 1000,
         filter_cut: float = 0.2,
         filter_batches: int = 10,
         cc_cut: float = 0.01,
@@ -95,6 +95,7 @@ class MetricLearningInference:
 
         node_features /= torch.tensor(self.node_feature_scales, device=self.device)
 
+        track_candidates = np.array([-1], dtype=np.int64)
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=self.device)
 
@@ -112,6 +113,16 @@ class MetricLearningInference:
         if self.debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
 
+        # order edges by their distances from collision point,
+        # and remove duplicated edges.
+        R = node_features[:, self.r_index] ** 2 + node_features[:, self.z_index] ** 2
+        edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
+        edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
+        edge_index = torch.unique(edge_index, dim=-1)
+
+        if self.debug:
+            print(f"after removing duplications: {edge_index.shape[1]:,}")
+
         # Filtering
         with torch.no_grad():
             edge_score = [
@@ -120,17 +131,14 @@ class MetricLearningInference:
             ]
 
         edge_score = torch.cat(edge_score).sigmoid()
-        edge_index = edge_index[:, edge_score > self.filter_cut]
+        edge_index = edge_index[:, edge_score >= self.filter_cut]
+        if edge_index.shape[1] < 2:
+            return track_candidates
+
         if self.debug:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
 
         # GNN
-        # rearrange the edges by their distances from collision point.
-        R = node_features[:, self.r_index] ** 2 + node_features[:, self.z_index] ** 2
-        edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
-        edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
-
-        # apply GNN
         gnn_node_feature_names = "r, phi, z, eta, cluster_r_1, cluster_phi_1, cluster_z_1, cluster_eta_1, cluster_r_2, cluster_phi_2, cluster_z_2, cluster_eta_2"
         gnn_node_feature_names = [x.strip() for x in gnn_node_feature_names.split(",")]
         gnn_node_feature_scales = [
@@ -167,18 +175,6 @@ class MetricLearningInference:
         cluster_phi = torch.atan2(cluster_y, cluster_x)
         cluster_eta = calc_eta(cluster_r, cluster_z)
 
-        cluster_r = (
-            cluster_r / self.node_feature_scales[self.node_feature_names.index("cluster_r_1")]
-        )
-        cluster_phi = (
-            cluster_phi / self.node_feature_scales[self.node_feature_names.index("cluster_phi_1")]
-        )
-        cluster_z = (
-            cluster_z / self.node_feature_scales[self.node_feature_names.index("cluster_z_1")]
-        )
-        cluster_eta = (
-            cluster_eta / self.node_feature_scales[self.node_feature_names.index("cluster_eta_1")]
-        )
         gnn_node_features = torch.stack(
             [
                 node_features[:, 0] * self.node_feature_scales[0] / gnn_node_feature_scales[0],
@@ -225,15 +221,12 @@ class MetricLearningInference:
         all_trkx["walk"] = walkutils.walk_through(
             graph, score_name, self.walk_min, self.walk_max, self.cc_cut
         )
+        if self.debug:
+            print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
+            print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
 
         tracks = all_trkx["cc"] + list(all_trkx["walk"])
-        total_length = sum(len(trk) + 1 for trk in tracks)
-        track_candidates = np.empty(total_length, dtype=int)
-
-        # label each hits
-        track_candidates = np.array([
-            item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
-        ])
+        track_candidates = np.array([item for track in tracks for item in [*track, -1]])
         return track_candidates
 
     def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
@@ -247,7 +240,7 @@ if __name__ == "__main__":
     add_arg = parser.add_argument("-i", "--input", type=str, default="node_features.pt")
 
     args = parser.parse_args()
-    inference = MetricLearningInference(model_path="./", r_max=0.11, debug=True)
-    node_features = torch.load(args.input)
+    inference = MetricLearningInference(model_path="./", debug=True)
+    node_features = torch.load(args.input).float()
     track_ids = inference(node_features)
     print(track_ids)
