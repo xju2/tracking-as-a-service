@@ -17,17 +17,8 @@ import fastwalkthrough as walkutils
 
 import torch
 import yaml
-from pytorch_lightning import LightningModule
-
 import onnxruntime as ort
 
-# from acorn import stages
-# from acorn.core.core_utils import find_latest_checkpoint
-# from acorn.stages.edge_classifier import (
-#     RecurrentInteractionGNN2,
-#     ChainedInteractionGNN2,
-#     GNNFilter,
-# )
 from metric_learning import MetricLearning
 from interaction_gnn import (
     RecurrentInteractionGNN2,

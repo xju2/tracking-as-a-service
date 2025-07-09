@@ -10,13 +10,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 # Local imports
-from acorn.stages.graph_construction.models.utils import make_mlp, build_edges, graph_intersection
-from acorn.stages.graph_construction.utils import build_signal_edges  # handle_weighting
-from acorn.utils import handle_weighting
-from acorn.utils.version_utils import get_pyg_data_keys
-from acorn.utils.loading_utils import remove_variable_name_prefix_in_pyg
-from acorn.stages.track_building.utils import rearrange_by_distance
-
+from utils import make_mlp, build_edges, graph_intersection
 
 class MetricLearning(nn.Module):
     def __init__(self, hparams):
