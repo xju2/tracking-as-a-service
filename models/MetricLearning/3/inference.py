@@ -21,9 +21,15 @@ from pytorch_lightning import LightningModule
 
 import onnxruntime as ort
 
-from acorn import stages
-from acorn.core.core_utils import find_latest_checkpoint
-from acorn.stages.edge_classifier import (
+# from acorn import stages
+# from acorn.core.core_utils import find_latest_checkpoint
+# from acorn.stages.edge_classifier import (
+#     RecurrentInteractionGNN2,
+#     ChainedInteractionGNN2,
+#     GNNFilter,
+# )
+from metric_learning import MetricLearning
+from interaction_gnn import (
     RecurrentInteractionGNN2,
     ChainedInteractionGNN2,
     GNNFilterJitable,
@@ -115,77 +121,35 @@ class MetricLearningInference:
 
         # Load checkpoints instead of .pt files
         # Find checkpoint directory
-        checkpoint_dir = model_path / "MetricLearning"
-        if not checkpoint_dir.exists():
-            raise FileNotFoundError(f"Checkpoint directory {checkpoint_dir} does not exist.")
-
-        # Find latest checkpoint
-        checkpoint_path_ml = find_latest_checkpoint(
-            checkpoint_dir, templates=["best*.ckpt", "*.ckpt"]
-        )
-        if not checkpoint_path_ml:
-            raise FileNotFoundError(f"No checkpoint found in {checkpoint_dir}")
-
-        checkpoint_dir = model_path / "Filter"
-        if not checkpoint_dir.exists():
-            raise FileNotFoundError(f"Checkpoint directory {checkpoint_dir} does not exist.")
-
-        # Find latest checkpoint
-        checkpoint_path_filter = find_latest_checkpoint(
-            checkpoint_dir, templates=["best*39.ckpt", "*.ckpt"]
-        )
-        if not checkpoint_path_filter:
-            raise FileNotFoundError(f"No checkpoint found in {checkpoint_dir}")
-
-        checkpoint_dir = model_path / "GNN"
-        if not checkpoint_dir.exists():
-            raise FileNotFoundError(f"Checkpoint directory {checkpoint_dir} does not exist.")
-
-        # Find latest checkpoint
-        checkpoint_path_gnn = find_latest_checkpoint(
-            checkpoint_dir, templates=["best*.ckpt", "*.ckpt"]
-        )
-        if not checkpoint_path_gnn:
-            raise FileNotFoundError(f"No checkpoint found in {checkpoint_dir}")
-
+        embedding_path = model_path / "embedding.ckpt"
+        filtering_path = model_path / "filter.ckpt"
+        gnn_path = model_path / "gnn.ckpt"
 
         # load the checkpoint
-        # Get LightningModule class
-        stage_name = "graph_construction"
-        model_name = "MetricLearning"
-        lightning_model_cls = getattr(getattr(stages, stage_name), model_name)
-        if not issubclass(lightning_model_cls, LightningModule):
-            raise ValueError(f"Model {model_name} is not a LightningModule")
 
-        print(f"Loading checkpoint from {checkpoint_path_ml}")
-        self.embedding_model = lightning_model_cls.load_from_checkpoint(checkpoint_path_ml).to("cpu")
-        print(self.embedding_model.hparams)
+        print(f"Loading checkpoint from {embedding_path}")
+        checkpoint = torch.load(embedding_path, map_location="cpu")
+        self.embedding_model = MetricLearning(checkpoint["hyper_parameters"])
+        self.embedding_model.load_state_dict(checkpoint["state_dict"])
         self.embedding_model.to(self.config.device).eval()
 
-        stage_name = "edge_classifier"
-        model_name = "GNNFilter"
-        lightning_model_cls = getattr(getattr(stages, stage_name), model_name)
-        if not issubclass(lightning_model_cls, LightningModule):
-            raise ValueError(f"Model {model_name} is not a LightningModule")
-
-        print(f"Loading checkpoint from {checkpoint_path_filter}")
-        self.filter_model = lightning_model_cls.load_from_checkpoint(checkpoint_path_filter).to("cpu")
-        print(self.filter_model.hparams)
+        print(f"Loading checkpoint from {filtering_path}")
+        checkpoint = torch.load(filtering_path, map_location="cpu")
+        new_model = GNNFilterJitable(checkpoint["hyper_parameters"])
+        new_model.load_state_dict(checkpoint["state_dict"])
+        self.filter_model = new_model
         self.filter_model.to(self.config.device).eval()
 
-        stage_name = "edge_classifier"
-        model_name = "InteractionGNN2"
-        lightning_model_cls = getattr(getattr(stages, stage_name), model_name)
-        if not issubclass(lightning_model_cls, LightningModule):
-            raise ValueError(f"Model {model_name} is not a LightningModule")
-        print(f"Loading checkpoint from {checkpoint_path_gnn}")
-        self.gnn_model = lightning_model_cls.load_from_checkpoint(checkpoint_path_gnn).to("cpu")
-        print(self.gnn_model.hparams)
-        model_config = self.gnn_model.hparams
+        print(f"Loading checkpoint from {gnn_path}")
+        checkpoint = torch.load(gnn_path, map_location="cpu")
+        model_config = checkpoint["hyper_parameters"]
+        state_dict = checkpoint["state_dict"]
+
         is_recurrent = (
             model_config["node_net_recurrent"] and model_config["edge_net_recurrent"]
         )
         print(f"Is a recurrent GNN?: {is_recurrent}")
+
         if is_recurrent:
             print("Use RecurrentInteractionGNN2")
             new_gnn = RecurrentInteractionGNN2(model_config)
@@ -193,10 +157,11 @@ class MetricLearningInference:
             print("Use ChainedInteractionGNN2")
             new_gnn = ChainedInteractionGNN2(model_config)
 
-        new_gnn.to(self.config.device).eval()
-        new_gnn.load_state_dict(self.gnn_model.state_dict())
+        new_gnn.load_state_dict(state_dict)
 
         self.gnn_model = new_gnn
+        self.gnn_model.to(self.config.device).eval()
+
 
         if self.config.compling:
             print("compling models do not work now...")
@@ -401,9 +366,17 @@ class MetricLearningInference:
             )
             r_avg = (r[dst] + r[src]) / 2.0
             rphislope = torch.nan_to_num(torch.multiply(r_avg, phislope), nan=0.0)
-            return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
+            return {
+                "dr": dr,
+                "dphi": dphi,
+                "dz": dz,
+                "deta": deta,
+                "phislope": phislope,
+                "rphislope": rphislope,
+            }
 
-        edge_features = calculate_edge_features()
+        edge_features_dict = calculate_edge_features()
+        edge_features = torch.stack(list(edge_features_dict.values()), dim=1)
 
         edge_scores = run_torch_model(
             self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features

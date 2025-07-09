@@ -13,7 +13,7 @@ def check_autocast_support(device_type: str):
 def run_torch_model(model: torch.nn.Module, auto_cast: bool, *inputs):
     assert len(inputs) > 0, "At least one input must be provided."
     with torch.no_grad():
-        device_type = model.device.type
+        device_type = next(model.parameters()).device
         if auto_cast and check_autocast_support(device_type):
             with torch.autocast(device_type, dtype=dtype):
                 output = model(*inputs)
