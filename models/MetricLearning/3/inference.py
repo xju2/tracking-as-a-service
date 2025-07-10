@@ -14,7 +14,7 @@ from torch_geometric.utils import to_networkx
 
 from torch_model_inference import run_gnn_filter, run_torch_model
 import fastwalkthrough as walkutils
-
+import time
 import torch
 import yaml
 import onnxruntime as ort
@@ -27,6 +27,16 @@ from interaction_gnn import (
 )
 
 torch.manual_seed(42)
+torch.set_float32_matmul_precision('high')
+
+def timed(fn):
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    result = fn()
+    end.record()
+    torch.cuda.synchronize()
+    return result, start.elapsed_time(end) / 1000
 
 
 def build_edges(
@@ -155,11 +165,18 @@ class MetricLearningInference:
 
 
         if self.config.compling:
-            print("compling models do not work now...")
-            self.embedding_model = torch.compile(self.embedding_model)
-            self.filter_model.gnn = torch.compile(self.filter_model.gnn)
-            self.filter_model.net = torch.compile(self.filter_model.net)
-            self.gnn_model = torch.compile(self.gnn_model)
+            print("compling models works now...")
+            torch.set_float32_matmul_precision('high')
+            # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
+            self.embedding_model = torch.compile(self.embedding_model, dynamic=True, mode="max-autotune")
+            # # Compile GNNFilter
+            self.filter_model.gnn = torch.compile(self.filter_model.gnn, dynamic=True, mode="max-autotune")
+            self.filter_model.net = torch.compile(self.filter_model.net, dynamic=True, mode="max-autotune")
+            # # Compile interaction gnn
+            self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
+            #self.embedding_model.eval()
+            # self.filter_model.eval()
+            # self.gnn_model.eval()
 
         self.input_node_features = [
             "r",
@@ -230,7 +247,12 @@ class MetricLearningInference:
         ]
         embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
 
+        # torch.cuda.synchronize()
+        # t0 = time.time()
         embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
+        # torch.cuda.synchronize()
+        # print(f"run_torch_model (embedding) time: {time.time() - t0:.4f} s")
+
         if debug:
             print(f"after embedding, shape = {embedding.shape}")
             print("embedding data", embedding[0])
@@ -256,9 +278,13 @@ class MetricLearningInference:
             out_data.filtering_nodes = filtering_inputs
 
         # Build edges
+        # torch.cuda.synchronize()
+        # t0 = time.time()
         edge_index = build_edges(
             embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
+        # torch.cuda.synchronize()
+        # print(f"build_edges time: {time.time() - t0:.4f} s")
 
         if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
@@ -291,6 +317,8 @@ class MetricLearningInference:
             out_data.filter_edge_list_before = edge_index
 
         # GNNFiltering
+        # torch.cuda.synchronize()
+        # t0 = time.time()
         edge_scores, edge_index, _ = run_gnn_filter(
             self.filter_model,
             self.config.auto_cast,
@@ -298,6 +326,8 @@ class MetricLearningInference:
             filtering_inputs,
             edge_index,
         )
+        # torch.cuda.synchronize()
+        # print(f"run_torch_model (filtering) time: {time.time() - t0:.4f} s")
 
         if debug:
             print("edge_score", edge_scores[:10])
@@ -369,9 +399,13 @@ class MetricLearningInference:
         edge_features_dict = calculate_edge_features()
         edge_features = torch.stack(list(edge_features_dict.values()), dim=1)
 
+        # torch.cuda.synchronize()
+        # t0 = time.time()
         edge_scores = run_torch_model(
             self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
-        ).sigmoid()
+        ).sigmoid().to(torch.float32)
+        # torch.cuda.synchronize()
+        # print(f"run_torch_model (GNN) time: {time.time() - t0:.4f} s")
 
 
         # CC and Walkthrough
@@ -516,10 +550,11 @@ if __name__ == "__main__":
 
         from tqdm import tqdm
 
-        start_time = time.time()
-        num_trials = 4
+        #start_time = time.time()
+        num_trials = 10
         print("start timing...")
         for _ in tqdm(range(num_trials)):
             track_ids = inference(node_features)
-        print("average time per event", (time.time() - start_time) / num_trials)
+            print("time for one inference:", timed(lambda: inference(node_features))[1])
+        # print("average time per event", (time.time() - start_time) / num_trials)
     print("total tracks", np.sum(track_ids == -1))

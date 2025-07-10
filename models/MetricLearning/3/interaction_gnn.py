@@ -3,7 +3,7 @@ import importlib
 
 import torch
 import torch.nn as nn
-from torch.utils.checkpoint import checkpoint
+
 from torch_scatter import scatter_add, scatter_mean
 from torch_geometric.nn import SAGEConv
 
