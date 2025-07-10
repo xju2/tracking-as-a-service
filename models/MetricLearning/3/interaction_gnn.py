@@ -116,10 +116,8 @@ class InteractionGNNParams():
         edge_index: torch.Tensor,
         edge_attr: Optional[torch.Tensor] = None,
     ):
-        if self.params["checkpointing"] and self.training:
-            return self.forward_with_checkpoint(node_features, edge_index, edge_attr)
-        else:
-            return self.forward_without_checkpoint(node_features, edge_index, edge_attr)
+        return self.forward_without_checkpoint(node_features, edge_index, edge_attr)
+
 
 def make_mlp(
     input_size,
