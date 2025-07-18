@@ -24,7 +24,7 @@ def labels_to_candidates(labels):
 
 
 def test_ExaTrkX(host: str, port: int, input_fname="node_features.pt"):
-    if port not in {8000, 8001}:
+    if port not in (8000, 8001, 443):
         print(f"Invalid port: {port}")
         sys.exit(1)
 
@@ -37,7 +37,7 @@ def test_ExaTrkX(host: str, port: int, input_fname="node_features.pt"):
     else:
         raise FileNotFoundError(f"Input file {input_fname} not found.")
 
-    if port == 8000:
+    if port in (8000, 443):
         client = httpclient.InferenceServerClient(f"{host}:{port}")
         inputs = [
             httpclient.InferInput(
