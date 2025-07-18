@@ -38,7 +38,12 @@ def test_ExaTrkX(host: str, port: int, input_fname="node_features.pt"):
         raise FileNotFoundError(f"Input file {input_fname} not found.")
 
     if port in (8000, 443):
-        client = httpclient.InferenceServerClient(f"{host}:{port}")
+        client = httpclient.InferenceServerClient(
+            f"{host}:{port}",
+            ssl=True,
+            ssl_options={"cert_reqs": "CERT_NONE"},  # Use this if using self-signed certs (for testing)
+            connection_timeout=60,  # Increase timeout if needed
+            network_timeout=60)
         inputs = [
             httpclient.InferInput(
                 "FEATURES", input_data.shape, np_to_triton_dtype(input_data.dtype)
