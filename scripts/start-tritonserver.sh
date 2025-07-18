@@ -32,7 +32,7 @@ TRITON_LOG_VERBOSE_FLAGS=""
 TRITON_SEVER_NAME="${SLURMD_NODENAME}"
 
 echo "{" > $OUTPUTFILE
-echo "  \"url\": \"$SLURMD_NODENAME\"," > $OUTPUTFILE
+echo "  \"url\": \"$SLURMD_NODENAME\"," >> $OUTPUTFILE
 echo "  \"port\": 8001," >> $OUTPUTFILE
 echo "}" >> $OUTPUTFILE
 
