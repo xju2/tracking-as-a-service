@@ -42,5 +42,5 @@ parameters: {
 
 parameters: {
   key: "save_event",
-  value: {string_value: "False"}
+  value: {string_value: "True"}
 }
