@@ -69,7 +69,7 @@ class TritonPythonModel:
             auto_cast=auto_cast,
             compling=compling,
             debug=self.debug,
-            save_debug_data=self.save_event,
+            save_input_data=self.save_event,
         )
 
         self.inference = MetricLearningInference(config)
