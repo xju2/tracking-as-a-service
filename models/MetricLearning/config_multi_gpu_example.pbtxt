@@ -1,0 +1,73 @@
+# Example Triton configuration for multi-GPU MetricLearning model
+# This demonstrates how to configure multiple GPU instances
+name: "MetricLearning"
+backend: "python"
+
+input [
+  {
+    name: "FEATURES"
+    data_type: TYPE_FP32
+    dims: [ -1, 44 ]
+  }
+]
+
+output [
+  {
+    name: "LABELS"
+    data_type: TYPE_INT64
+    dims: [ -1 ]
+  }
+]
+
+# Multi-GPU configuration examples:
+
+# Option 1: Multiple instances on specific GPUs
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 0 ]
+  },
+  {
+    count: 1  
+    kind: KIND_GPU
+    gpus: [ 1 ]
+  }
+]
+
+# Option 2: Multiple instances across all available GPUs
+# instance_group [
+#   {
+#     count: 2
+#     kind: KIND_GPU
+#   }
+# ]
+
+# Option 3: Specific GPU mapping with multiple instances per GPU
+# instance_group [
+#   {
+#     count: 2
+#     kind: KIND_GPU
+#     gpus: [ 0, 1 ]
+#   }
+# ]
+
+parameters: {
+  key: "auto_cast",
+  value: {string_value: "False"}
+}
+
+parameters: {
+  key: "compling",
+  value: {string_value: "False"}
+}
+
+parameters: {
+  key: "debug",
+  value: {string_value: "False"}
+}
+
+parameters: {
+  key: "save_event",
+  value: {string_value: "False"}
+}
