@@ -163,9 +163,10 @@ class MetricLearningInference:
 
         new_gnn.load_state_dict(state_dict)
 
+        self.embedding_model.eval()
+        self.filter_model.eval()
         self.gnn_model = new_gnn
         self.gnn_model.to(self.config.device).eval()
-
 
         if self.config.compling:
             print("compling models works now...")
@@ -177,9 +178,6 @@ class MetricLearningInference:
             self.filter_model.net = torch.compile(self.filter_model.net, dynamic=True, mode="max-autotune")
             # # Compile interaction gnn
             self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
-            #self.embedding_model.eval()
-            # self.filter_model.eval()
-            # self.gnn_model.eval()
 
         self.input_node_features = [
             "r",
@@ -294,7 +292,7 @@ class MetricLearningInference:
             nvtx.range_push("Build Edges")
         # torch.cuda.synchronize()
         # t0 = time.time()
-        self.config.k_max  = 1024
+
         edge_index = build_edges(
             embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
@@ -579,7 +577,7 @@ if __name__ == "__main__":
     track_ids = inference(node_features, nvtx_enabled=False)
 
     # time the inference function.
-    if True: # args.timing:
+    if args.timing:
         import time
 
         from tqdm import tqdm

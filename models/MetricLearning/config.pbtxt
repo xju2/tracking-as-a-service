@@ -27,12 +27,12 @@ instance_group [
 
 parameters: {
   key: "auto_cast",
-  value: {string_value: "False"}
+  value: {string_value: "True"}
 }
 
 parameters: {
   key: "compling",
-  value: {string_value: "False"}
+  value: {string_value: "True"}
 }
 
 parameters: {
