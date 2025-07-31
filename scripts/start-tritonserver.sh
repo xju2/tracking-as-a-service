@@ -33,7 +33,7 @@ TRITON_SEVER_NAME="${SLURMD_NODENAME}"
 
 echo "{" > $OUTPUTFILE
 echo "  \"url\": \"$SLURMD_NODENAME\"," >> $OUTPUTFILE
-echo "  \"port\": 8001," >> $OUTPUTFILE
+echo "  \"port\": 8001" >> $OUTPUTFILE
 echo "}" >> $OUTPUTFILE
 
 #Setup Triton flags
