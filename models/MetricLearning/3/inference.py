@@ -32,14 +32,8 @@ from interaction_gnn import (
 torch.manual_seed(42)
 torch.set_float32_matmul_precision('high')
 
-# def timed(fn):
-#     start = torch.cuda.Event(enable_timing=True)
-#     end = torch.cuda.Event(enable_timing=True)
-#     start.record()
-#     result = fn()
-#     end.record()
-#     torch.cuda.synchronize()
-#     return result, start.elapsed_time(end) / 1000
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 
 
 def build_edges(
