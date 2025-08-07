@@ -1,0 +1,51 @@
+name: "ModuleMap"
+backend: "python"
+
+input [
+  {
+    name: "FEATURES"
+    data_type: TYPE_FP32
+    dims: [ -1, 44 ]
+  }
+]
+
+output [
+  {
+    name: "LABELS"
+    data_type: TYPE_INT64
+    dims: [ -1 ]
+  }
+]
+
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+   }
+]
+
+parameters: {
+  key: "auto_cast",
+  value: {string_value: "False"}
+}
+
+parameters: {
+  key: "compling",
+  value: {string_value: "False"}
+}
+
+parameters: {
+  key: "debug",
+  value: {string_value: "False"}
+}
+
+parameters: {
+  key: "save_event",
+  value: {string_value: "False"}
+}
+
+parameters: {
+  key: "module_map_pattern_path",
+  value: {string_value: "/global/cfs/cdirs/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"}
+}
