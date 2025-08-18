@@ -86,7 +86,8 @@ class ModuleMapInference:
 
         # Load checkpoints instead of .pt files
         # Find checkpoint directory
-        self.config.module_map_pattern_path = "/global/cfs/cdirs/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
+        # self.config.module_map_pattern_path = "/global/cfs/cdirs/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
+        self.config.module_map_pattern_path = "/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
         mmg.init_graph_builder(self.config.module_map_pattern_path)
         gnn_path = model_path / "gnn.ckpt"
 
@@ -160,7 +161,6 @@ class ModuleMapInference:
 
         node_features = node_features.to(device).float()
         node_features = torch.nan_to_num(node_features, nan=0.0, posinf=0.0, neginf=0.0)
-        print(f"node_features shape: {node_features}")
 
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=device)

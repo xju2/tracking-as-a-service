@@ -47,5 +47,5 @@ parameters: {
 
 parameters: {
   key: "module_map_pattern_path",
-  value: {string_value: "/global/cfs/cdirs/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"}
+  value: {string_value: "/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"}
 }
