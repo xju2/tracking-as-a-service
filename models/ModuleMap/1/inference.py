@@ -72,6 +72,9 @@ class ModuleMapInferenceConfig:
         self.model_path = (
             Path(self.model_path) if isinstance(self.model_path, str) else self.model_path
         )
+        self.module_map_pattern_path = (
+            Path(self.module_map_pattern_path) if isinstance(self.module_map_pattern_path, str) else self.module_map_pattern_path
+        )
 
 
 class ModuleMapInference:
@@ -83,13 +86,20 @@ class ModuleMapInference:
             if not isinstance(self.config.model_path, Path)
             else self.config.model_path
         )
+        self.config.module_map_pattern_path = "/pscratch/sd/a/alazar/tracking-as-a-service/models/ModuleMap/1/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
+        module_map_pattern_path = (
+            Path(self.config.module_map_pattern_path)
+            if not isinstance(self.config.module_map_pattern_path, Path)
+            else self.config.module_map_pattern_path
+        )
 
         # Load checkpoints instead of .pt files
         # Find checkpoint directory
         # self.config.module_map_pattern_path = "/global/cfs/cdirs/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
-        self.config.module_map_pattern_path = "/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
+
+        print("Path: ",self.config.module_map_pattern_path)
         mmg.init_graph_builder(self.config.module_map_pattern_path)
-        gnn_path = model_path / "gnn.ckpt"
+        gnn_path = model_path / "MM_minmax_gnn.ckpt"
 
         # load the checkpoint
 
@@ -499,6 +509,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if not Path(args.model).exists():
         raise FileNotFoundError(f"Model path {args.model} does not exist.")
+    if not Path(args.module_map_pattern_path).exists():
+        raise FileNotFoundError(f"Module map pattern path {args.module_map_pattern_path} does not exist.")
 
     inference = create_module_map_end2end_rel24(
         model_path=args.model,

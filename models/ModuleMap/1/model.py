@@ -54,8 +54,11 @@ class TritonPythonModel:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         auto_cast = get_parameter("auto_cast").lower() == "true"
         compling = get_parameter("compling").lower() == "true"
+        # module_map_pattern_path is expected as a model parameter in config.pbtxt
+        module_map_pattern_path = get_parameter("module_map_pattern_path")
         config = ModuleMapInferenceConfig(
             model_path=model_path,
+            module_map_pattern_path=module_map_pattern_path,
             device=device,
             auto_cast=auto_cast,
             compling=compling,
