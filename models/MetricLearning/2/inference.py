@@ -26,6 +26,17 @@ logging.basicConfig(
 torch.manual_seed(42)
 
 
+def to_trk_tensor(trk, device):
+    # Convert numba.typed.List or Python list -> numpy
+    if not isinstance(trk, np.ndarray):
+        trk = np.array(trk, dtype=np.int64)
+    else:
+        trk = trk.astype(np.int64, copy=False)
+
+    # Finally -> torch tensor on correct device
+    return torch.as_tensor(trk, dtype=torch.long, device=device)
+
+
 def build_edges(
     query: torch.Tensor,
     database: torch.Tensor,
@@ -400,7 +411,7 @@ class MetricLearningInference:
         for trk in tracks:
             # trk_tensor = np.array(trk, dtype=np.int64)
             # sorted_trk = trk_tensor[np.argsort(r3[trk_tensor])]
-            trk_tensor = torch.as_tensor(trk, dtype=torch.long, device=R.device)
+            trk_tensor = to_trk_tensor(trk, device)
             sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
             # trk_tensor = torch.tensor(trk, device=device, dtype=torch.int64)
             # sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
