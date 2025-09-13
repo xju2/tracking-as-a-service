@@ -50,5 +50,8 @@ podman-hpc run -it --rm --gpu --shm-size=20GB -p 8002:8002 -p 8001:8001 -p 8000:
     $TRITON_IMAGE \
     tritonserver \
         --model-repository=/models \
+        --model-control-mode=explicit \
+        --load-model=MetricLearning \
+        --allow-metrics=true \
         $TRITON_LOG_VERBOSE_FLAGS  2>&1 \
         | tee $TRITON_JOBS_DIR/$TRITON_SEVER_NAME.log

@@ -20,8 +20,9 @@ output [
 
 instance_group [
   {
-    count: 1
+    count: 3
     kind: KIND_GPU
+    gpus: [ 0 ]
    }
 ]
 
@@ -31,7 +32,7 @@ parameters: {
 }
 
 parameters: {
-  key: "compling",
+  key: "compiling",
   value: {string_value: "False"}
 }
 
