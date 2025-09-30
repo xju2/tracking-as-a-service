@@ -579,7 +579,7 @@ if __name__ == "__main__":
     track_ids = inference(node_features, nvtx_enabled=False)
 
     # time the inference function.
-    if True: # args.timing:
+    if args.timing:
         import time
 
         from tqdm import tqdm
