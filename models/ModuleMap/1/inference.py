@@ -4,58 +4,42 @@ from dataclasses import dataclass
 from pathlib import Path
 from operator import itemgetter
 
-import frnn
 import networkx as nx
 import numpy as np
 import torch
 from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
 from torch_geometric.utils import to_networkx
+import torch.cuda.nvtx as nvtx
 
-from torch_model_inference import run_gnn_filter, run_torch_model
+import pymmg.mmg_wrapper as mmg
+from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
 import fastwalkthrough as walkutils
+import time
+import torch
+import yaml
+import onnxruntime as ort
+
+
+from interaction_gnn import (
+    RecurrentInteractionGNN2,
+    ChainedInteractionGNN2,
+    GNNFilterJitable,
+)
 
 torch.manual_seed(42)
-
-
-def build_edges(
-    query: torch.Tensor,
-    database: torch.Tensor,
-    r_max: float = 0.1,
-    k_max: int = 1000,
-) -> torch.Tensor:
-    # Compute edges
-    _, idxs, _, _ = frnn.frnn_grid_points(
-        points1=query.unsqueeze(0),
-        points2=database.unsqueeze(0),
-        lengths1=None,
-        lengths2=None,
-        K=k_max,
-        r=r_max,
-        grid=None,
-        return_nn=False,
-        return_sorted=True,
-    )
-
-    idxs: torch.Tensor = idxs.squeeze().int()
-    ind = torch.arange(idxs.shape[0], device=query.device).repeat(idxs.shape[1], 1).T.int()
-    positive_idxs = idxs >= 0
-    edge_list = torch.stack([ind[positive_idxs], idxs[positive_idxs]]).long()
-
-    # Remove self-loops
-    edge_list = edge_list[:, edge_list[0] != edge_list[1]]
-    return edge_list
+torch.set_float32_matmul_precision('high')
 
 
 @dataclass
-class MetricLearningInferenceConfig:
+class ModuleMapInferenceConfig:
     model_path: str | Path
+    module_map_pattern_path: str | Path
     device: str
     auto_cast: bool
     compling: bool
     debug: bool
     save_debug_data: bool = False
-    save_input_data: bool = False
     r_max: float = 0.12
     k_max: int = 1000
     filter_cut: float = 0.05
@@ -88,10 +72,13 @@ class MetricLearningInferenceConfig:
         self.model_path = (
             Path(self.model_path) if isinstance(self.model_path, str) else self.model_path
         )
+        self.module_map_pattern_path = (
+            Path(self.module_map_pattern_path) if isinstance(self.module_map_pattern_path, str) else self.module_map_pattern_path
+        )
 
 
-class MetricLearningInference:
-    def __init__(self, config: MetricLearningInferenceConfig):
+class ModuleMapInference:
+    def __init__(self, config: ModuleMapInferenceConfig):
         self.config = config
         print(self.config)
         model_path = (
@@ -99,79 +86,83 @@ class MetricLearningInference:
             if not isinstance(self.config.model_path, Path)
             else self.config.model_path
         )
-        embedding_path = model_path / "embedding.pt"
-        filtering_path = model_path / "filter.pt"
-        gnn_path = model_path / "gnn.pt"
+        self.config.module_map_pattern_path = "/pscratch/sd/a/alazar/tracking-as-a-service/models/ModuleMap/1/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
+        module_map_pattern_path = (
+            Path(self.config.module_map_pattern_path)
+            if not isinstance(self.config.module_map_pattern_path, Path)
+            else self.config.module_map_pattern_path
+        )
 
-        self.embedding_model = (
-            torch.jit.load(embedding_path).to(self.config.device, non_blocking=True).eval()
+        # Load checkpoints instead of .pt files
+        # Find checkpoint directory
+        # self.config.module_map_pattern_path = "/global/cfs/cdirs/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
+
+        print("Path: ",self.config.module_map_pattern_path)
+        mmg.init_graph_builder(self.config.module_map_pattern_path)
+        gnn_path = model_path / "MM_minmax_gnn.ckpt"
+
+        # load the checkpoint
+
+        print(f"Loading checkpoint from {gnn_path}")
+        checkpoint = torch.load(gnn_path, map_location="cpu")
+        model_config = checkpoint["hyper_parameters"]
+        state_dict = checkpoint["state_dict"]
+
+        is_recurrent = (
+            model_config["node_net_recurrent"] and model_config["edge_net_recurrent"]
         )
-        self.filter_model = (
-            torch.jit.load(filtering_path).to(self.config.device, non_blocking=True).eval()
-        )
-        self.gnn_model = torch.jit.load(gnn_path).to(self.config.device, non_blocking=True).eval()
-        print("Models loaded successfully", self.gnn_model)
+        print(f"Is a recurrent GNN?: {is_recurrent}")
+
+        if is_recurrent:
+            print("Use RecurrentInteractionGNN2")
+            new_gnn = RecurrentInteractionGNN2(model_config)
+        else:
+            print("Use ChainedInteractionGNN2")
+            new_gnn = ChainedInteractionGNN2(model_config)
+
+        new_gnn.load_state_dict(state_dict)
+
+        self.gnn_model = new_gnn
+        self.gnn_model.to(self.config.device).eval()
+
 
         if self.config.compling:
-            print("compling models do not work now...")
-            # self.embedding_model = torch.compile(self.embedding_model)
-            # self.filter_model.gnn = torch.compile(self.filter_model.gnn)
-            # self.filter_model.net = torch.compile(self.filter_model.net)
-            # self.gnn_model = torch.compile(self.gnn_model)
+            print("compling models works now...")
+            torch.set_float32_matmul_precision('high')
+            # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
+            self.embedding_model = torch.compile(self.embedding_model, dynamic=True, mode="max-autotune")
+            # # Compile GNNFilter
+            self.filter_model.gnn = torch.compile(self.filter_model.gnn, dynamic=True, mode="max-autotune")
+            self.filter_model.net = torch.compile(self.filter_model.net, dynamic=True, mode="max-autotune")
+            # # Compile interaction gnn
+            self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
+            #self.embedding_model.eval()
+            # self.filter_model.eval()
+            # self.gnn_model.eval()
 
         self.input_node_features = [
+            "x",
+            "y",
+            "z",
+            "module_id",
+            "hit_id",
             "r",
             "phi",
-            "z",
-            "cluster_x_1",
-            "cluster_y_1",
-            "cluster_z_1",
-            "cluster_x_2",
-            "cluster_y_2",
-            "cluster_z_2",
-            "count_1",
-            "charge_count_1",
-            "loc_eta_1",
-            "loc_phi_1",
-            "localDir0_1",
-            "localDir1_1",
-            "localDir2_1",
-            "lengthDir0_1",
-            "lengthDir1_1",
-            "lengthDir2_1",
-            "glob_eta_1",
-            "glob_phi_1",
-            "eta_angle_1",
-            "phi_angle_1",
-            "count_2",
-            "charge_count_2",
-            "loc_eta_2",
-            "loc_phi_2",
-            "localDir0_2",
-            "localDir1_2",
-            "localDir2_2",
-            "lengthDir0_2",
-            "lengthDir1_2",
-            "lengthDir2_2",
-            "glob_eta_2",
-            "glob_phi_2",
-            "eta_angle_2",
-            "phi_angle_2",
             "eta",
             "cluster_r_1",
             "cluster_phi_1",
+            "cluster_z_1",
             "cluster_eta_1",
             "cluster_r_2",
             "cluster_phi_2",
+            "cluster_z_2",
             "cluster_eta_2",
         ]
-        self.input_data_count = 0
 
-    def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
+    def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None, nvtx_enabled: bool = False):
         device = self.config.device
         debug = self.config.debug
         save_debug_data = self.config.save_debug_data
-        save_input_data = self.config.save_input_data
         out_debug_data_name = "debug_data.pt"
 
         track_candidates = np.array([-1], dtype=np.int64)
@@ -181,111 +172,149 @@ class MetricLearningInference:
         node_features = node_features.to(device).float()
         node_features = torch.nan_to_num(node_features, nan=0.0, posinf=0.0, neginf=0.0)
 
-        if save_input_data:
-            out_input_data_name = f"all_input_node_features_{self.input_data_count}.pt"
-            self.input_data_count += 1
-            torch.save(node_features, out_input_data_name)
-
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=device)
 
-        # Metric Learning
-        embedding_inputs = node_features[
-            :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
-        ]
-        embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
 
-        embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
-        if debug:
-            print(f"after embedding, shape = {embedding.shape}")
-            print("embedding data", embedding[0])
-            print("embedding data type", embedding.dtype)
+        if nvtx_enabled:
+            nvtx.range_push("MM Inference one event")
 
-        out_data = Data()
-        if save_debug_data:
-            out_data = Data(
-                embedding_inputs=embedding_inputs, embedding=embedding, node_features=node_features
-            )
+        # embedding_inputs = node_features[
+        #     :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
+        # ]
+        # embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
 
-        # delete the embedding inputs if not needed.
-        if self.config.filter_node_features == self.config.embedding_node_features:
-            filtering_inputs = embedding_inputs
-        else:
-            del embedding_inputs
-            filtering_inputs = node_features[
-                :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
-            ]
-            filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
+        # # torch.cuda.synchronize()
+        # # t0 = time.time()
+        # embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
+        # torch.cuda.synchronize()
+        # if nvtx_enabled:
+        #     nvtx.range_pop()
+        # # torch.cuda.synchronize()
+        # # print(f"run_torch_model (embedding) time: {time.time() - t0:.4f} s")
 
-        if save_debug_data:
-            out_data.filtering_nodes = filtering_inputs
+        # if debug:
+        #     print(f"after embedding, shape = {embedding.shape}")
+        #     print("embedding data", embedding[0])
+        #     print("embedding data type", embedding.dtype)
+
+        # out_data = Data()
+        # if save_debug_data:
+        #     out_data = Data(
+        #         embedding_inputs=embedding_inputs, embedding=embedding, node_features=node_features
+        #     )
+
+        # # delete the embedding inputs if not needed.
+        # if self.config.filter_node_features == self.config.embedding_node_features:
+        #     filtering_inputs = embedding_inputs
+        # else:
+        #     del embedding_inputs
+        #     filtering_inputs = node_features[
+        #         :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
+        #     ]
+        #     filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
+
+        # if save_debug_data:
+        #     out_data.filtering_nodes = filtering_inputs
 
         # Build edges
-        edge_index = build_edges(
-            embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
-        )
+        if nvtx_enabled:
+            nvtx.range_push("Build Edges")
+        # torch.cuda.synchronize()
+        # t0 = time.time()
+        # self.config.k_max  = 1024
+
+        event_id_np = "000001150"
+
+        edge_index = mmg.build_edge_index(
+                event_id_np,
+                hit_id.cpu(),
+                node_features[:, self.input_node_features.index("module_id")].cpu(),
+                node_features[:, self.input_node_features.index("x")].cpu(),
+                node_features[:, self.input_node_features.index("y")].cpu(),
+                node_features[:, self.input_node_features.index("z")].cpu(),
+                hit_id.shape[0],
+            )
+
+        # torch.cuda.synchronize()
+        # if nvtx_enabled:
+        #     nvtx.range_pop()
+        # # torch.cuda.synchronize()
+        # # print(f"build_edges time: {time.time() - t0:.4f} s")
 
         if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
-        else:
-            del embedding
+        edge_index = edge_index.to(device)
 
-        if save_debug_data:
-            out_data.embedding_edge_list = edge_index
 
-        if edge_index.shape[1] < 2:
-            if save_debug_data:
-                torch.save(out_data, out_debug_data_name)
-            return track_candidates
+        # if save_debug_data:
+        #     out_data.embedding_edge_list = edge_index
 
-        # order the edges by their distance from the collision point.
+        # if edge_index.shape[1] < 2:
+        #     if save_debug_data:
+        #         torch.save(out_data, out_debug_data_name)
+        #     return track_candidates
+
+        # edge_index = edge_index.to(device).long()
+        # # order the edges by their distance from the collision point.
         R = (
             node_features[:, self.input_node_features.index("r")] ** 2
             + node_features[:, self.input_node_features.index("z")] ** 2
         )
-        edge_flip_mask = (R[edge_index[0]] > R[edge_index[1]]) | (
-            (R[edge_index[0]] == R[edge_index[1]]) & (edge_index[0] > edge_index[1])
-        )
-        edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
-        edge_index = torch.unique(edge_index, dim=-1)
+        # edge_flip_mask = (R[edge_index[0]] > R[edge_index[1]]) | (
+        #     (R[edge_index[0]] == R[edge_index[1]]) & (edge_index[0] > edge_index[1])
+        # )
+        # edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
+        # edge_index = torch.unique(edge_index, dim=-1)
 
-        if debug:
-            print(f"after removing duplications: {edge_index.shape[1]:,}")
+        # if debug:
+        #     print(f"after removing duplications: {edge_index.shape[1]:,}")
 
-        if save_debug_data:
-            out_data.filter_edge_list_before = edge_index
+        # if save_debug_data:
+        #     out_data.filter_edge_list_before = edge_index
 
-        # GNNFiltering
-        edge_scores, edge_index, _ = run_gnn_filter(
-            self.filter_model,
-            self.config.auto_cast,
-            self.config.filter_batches,
-            filtering_inputs,
-            edge_index,
-        )
+        # # GNNFiltering
+        # if nvtx_enabled:
+        #     nvtx.range_push("GNN Filtering")
+        # # torch.cuda.synchronize()
+        # # t0 = time.time()
+        # edge_scores, edge_index, _ = run_gnn_filter_optimized(
+        #     self.filter_model,
+        #     self.config.auto_cast,
+        #     self.config.filter_batches,
+        #     filtering_inputs,
+        #     edge_index,
+        # )
+        # torch.cuda.synchronize()
+        # if nvtx_enabled:
+        #     nvtx.range_pop()
+        # # torch.cuda.synchronize()
+        # # print(f"run_torch_model (filtering) time: {time.time() - t0:.4f} s")
 
-        if debug:
-            print("edge_score", edge_scores[:10])
-            print("edge_index", edge_index[:, :10])
+        # if debug:
+        #     print("edge_score", edge_scores[:10])
+        #     print("edge_index", edge_index[:, :10])
 
-        if save_debug_data:
-            out_data.filter_node_features = filtering_inputs
-            out_data.filter_scores = edge_scores
-            out_data.filter_edge_list_after = edge_index
+        # if save_debug_data:
+        #     out_data.filter_node_features = filtering_inputs
+        #     out_data.filter_scores = edge_scores
+        #     out_data.filter_edge_list_after = edge_index
 
-        # apply fitlering score cuts.
-        edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
-        del edge_scores
-        if edge_index.shape[1] < 2:
-            return track_candidates
+        # # apply fitlering score cuts.
+        # edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
+        # # del edge_scores
+        # if edge_index.shape[1] < 2:
+        #     return track_candidates
 
-        if debug:
-            print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
-
+        # if debug:
+        #     print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
+        # torch.cuda.synchronize()
         # prepare GNN inputs
+
         gnn_input = node_features[
             :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
         ]
+
         gnn_input /= torch.tensor(self.config.gnn_node_scale, device=device).float()
 
         # calculate edge features: dr, dphi, dz, deta, phislope, rphislope
@@ -322,15 +351,38 @@ class MetricLearningInference:
             )
             r_avg = (r[dst] + r[src]) / 2.0
             rphislope = torch.nan_to_num(torch.multiply(r_avg, phislope), nan=0.0)
-            return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
+            return {
+                "dr": dr,
+                "dphi": dphi,
+                "dz": dz,
+                "deta": deta,
+                "phislope": phislope,
+                "rphislope": rphislope,
+            }
 
-        edge_features = calculate_edge_features()
+        edge_features_dict = calculate_edge_features()
+        edge_features = torch.stack(list(edge_features_dict.values()), dim=1)
+
+        # torch.cuda.synchronize()
+        # t0 = time.time()
+        if nvtx_enabled:
+            nvtx.range_push("GNN Inference")
 
         edge_scores = run_torch_model(
             self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
-        ).sigmoid()
+        ).sigmoid().to(torch.float32)
+        torch.cuda.synchronize()
+        if nvtx_enabled:
+            nvtx.range_pop()
+        torch.cuda.synchronize()
+        if nvtx_enabled:
+            nvtx.range_pop()
+        # print(f"run_torch_model (GNN) time: {time.time() - t0:.4f} s")
+
 
         # CC and Walkthrough
+        # if nvtx_enabled:
+        #     nvtx.range_push("CC and Walkthrough")
         if debug:
             print("After GNN...")
 
@@ -368,6 +420,8 @@ class MetricLearningInference:
         if debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
             print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
+        if nvtx_enabled:
+            nvtx.range_pop()
 
         tracks = all_trkx["cc"] + list(all_trkx["walk"])
         total_length = sum(len(trk) + 1 for trk in tracks)
@@ -393,12 +447,13 @@ class MetricLearningInference:
 
         return track_candidates
 
-    def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
-        return self.forward(node_features, hit_id)
+    def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None, nvtx_enabled: bool = False):
+        return self.forward(node_features, hit_id=hit_id, nvtx_enabled=nvtx_enabled)
 
 
-def create_metric_learning_end2end_rel24(
+def create_module_map_end2end_rel24(
     model_path: str,
+    module_map_pattern_path: str,
     device: str,
     debug: bool,
     precision: str,
@@ -406,8 +461,9 @@ def create_metric_learning_end2end_rel24(
     compiling: bool,
     save_data_for_debug: bool,
 ):
-    config = MetricLearningInferenceConfig(
+    config = ModuleMapInferenceConfig(
         model_path=model_path,
+        module_map_pattern_path=module_map_pattern_path,
         device=device,
         auto_cast=auto_cast,
         compling=compiling,
@@ -429,16 +485,17 @@ def create_metric_learning_end2end_rel24(
     )
 
     torch.set_float32_matmul_precision(precision)
-    model = MetricLearningInference(config)
+    model = ModuleMapInference(config)
     return model
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Inference for Metric Learning")
+    parser = argparse.ArgumentParser(description="Inference for ModuleMap pipeline")
     parser.add_argument("-i", "--input", type=str, default="node_features.pt", help="Input file")
     parser.add_argument("-m", "--model", type=str, default="./", help="Model path")
+    parser.add_argument("-mmp", "--module_map_pattern_path", type=str, default="./", help="Module map pattern path")
     parser.add_argument("-p", "--precision", type=str, default="highest", help="Precision")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")
@@ -452,9 +509,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if not Path(args.model).exists():
         raise FileNotFoundError(f"Model path {args.model} does not exist.")
+    if not Path(args.module_map_pattern_path).exists():
+        raise FileNotFoundError(f"Module map pattern path {args.module_map_pattern_path} does not exist.")
 
-    inference = create_metric_learning_end2end_rel24(
+    inference = create_module_map_end2end_rel24(
         model_path=args.model,
+        module_map_pattern_path=args.module_map_pattern_path,
         device=args.device,
         debug=args.verbose,
         precision=args.precision,
@@ -464,18 +524,21 @@ if __name__ == "__main__":
     )
     print("start a warm-up run.")
     node_features = torch.load(args.input)
-    track_ids = inference(node_features)
+    track_ids = inference(node_features, nvtx_enabled=False)
 
     # time the inference function.
-    if args.timing:
+    if True: # args.timing:
         import time
 
         from tqdm import tqdm
 
         start_time = time.time()
-        num_trials = 4
-        print("start timing...")
-        for _ in tqdm(range(num_trials)):
-            track_ids = inference(node_features)
-        print("average time per event", (time.time() - start_time) / num_trials)
+        num_trials = 10
+        print(">>> Starting NSYS-captured inference")
+        nvtx.range_push("Inference_Loop")
+        for _ in range(num_trials): #tqdm(range(num_trials)):
+            track_ids = inference(node_features, nvtx_enabled=True)
+            # print("time for one inference:", timed(lambda: inference(node_features))[1])
+        nvtx.range_pop()
+        # print("average time per event", (time.time() - start_time) / num_trials)
     print("total tracks", np.sum(track_ids == -1))
