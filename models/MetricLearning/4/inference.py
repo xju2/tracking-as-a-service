@@ -294,7 +294,7 @@ class MetricLearningInference:
             nvtx.range_push("Build Edges")
         # torch.cuda.synchronize()
         # t0 = time.time()
-        self.config.k_max  = 1024
+        # self.config.k_max  = 1024
         edge_index = build_edges(
             embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
