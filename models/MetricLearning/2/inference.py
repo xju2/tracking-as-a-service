@@ -55,6 +55,7 @@ class MetricLearningInferenceConfig:
     compling: bool
     debug: bool
     save_debug_data: bool = False
+    save_input_data: bool = False
     r_max: float = 0.12
     k_max: int = 1000
     filter_cut: float = 0.05
@@ -164,11 +165,13 @@ class MetricLearningInference:
             "cluster_phi_2",
             "cluster_eta_2",
         ]
+        self.input_data_count = 0
 
     def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
         device = self.config.device
         debug = self.config.debug
         save_debug_data = self.config.save_debug_data
+        save_input_data = self.config.save_input_data
         out_debug_data_name = "debug_data.pt"
 
         track_candidates = np.array([-1], dtype=np.int64)
@@ -177,6 +180,11 @@ class MetricLearningInference:
 
         node_features = node_features.to(device).float()
         node_features = torch.nan_to_num(node_features, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if save_input_data:
+            out_input_data_name = f"all_input_node_features_{self.input_data_count}.pt"
+            self.input_data_count += 1
+            torch.save(node_features, out_input_data_name)
 
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=device)
