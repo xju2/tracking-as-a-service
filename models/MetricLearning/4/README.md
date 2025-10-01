@@ -53,21 +53,21 @@ embedding data tensor([-0.0179, -0.1575, -0.2453,  0.1175,  0.1023, -0.1150,  0.
 embedding data type torch.float32
 Number of edges after embedding: 9,279,672
 after removing duplications: 4,639,836
-edge_score tensor([9.7556e-01, 2.0094e-04, 9.9307e-02, 7.6831e-04, 2.7306e-04, 1.0565e-04,
-        7.8635e-05, 3.3647e-04, 1.1229e-04, 3.3325e-04], device='cuda:0')
+edge_score tensor([9.1876e-01, 2.4591e-04, 8.8845e-02, 8.7648e-04, 1.8766e-03, 1.9007e-04,
+        1.7902e-04, 6.0699e-03, 2.0114e-04, 2.7147e-04], device='cuda:0')
 edge_index tensor([[14424, 14435, 85205,     3,     3,     5,     1, 14424, 14435, 14457],
         [    1,     1,     2,     5,     6,     6,     7,     7,     7,     7]],
        device='cuda:0')
-Number of edges after filtering: 654,266
+Number of edges after filtering: 527,051
 After GNN...
 the graph information
-Number of tracks found by CC: 3009
-Number of tracks found by Walkthrough: 622
+Number of tracks found by CC: 3068
+Number of tracks found by Walkthrough: 592
 track_candidates [14424     1 14508    78 14581 14649 21910 21986 22055 22135    -1     2
     81   165    -1     6    80   161   231   308]
-total tracks 3631
+total tracks 3660
 
-real    0m23.472s
-user    0m41.021s
-sys     0m5.416s
+real    0m22.832s
+user    0m35.496s
+sys     0m5.315s
 ```
