@@ -83,11 +83,7 @@ def build_edges(
         )
 
         idxs: torch.Tensor = idxs.squeeze(0).int()
-        ind = (
-            torch.arange(idxs.shape[0], device=query.device)
-            .repeat(idxs.shape[1], 1)
-            .T.int()
-        )
+        ind = torch.arange(idxs.shape[0], device=query.device).repeat(idxs.shape[1], 1).T.int()
         positive_idxs = idxs >= 0
         edge_list = torch.stack([ind[positive_idxs], idxs[positive_idxs]]).long()
     else:
@@ -100,11 +96,7 @@ def build_edges(
     # Remove self-loops
     edge_list = edge_list[:, edge_list[0] != edge_list[1]]
 
-    return (
-        (edge_list, dists, idxs, ind)
-        if (return_indices and backend == "FRNN")
-        else edge_list
-    )
+    return (edge_list, dists, idxs, ind) if (return_indices and backend == "FRNN") else edge_list
 
 
 def graph_intersection(
@@ -129,9 +121,7 @@ def graph_intersection(
     if not unique_truth:
         input_truth_graph = torch.unique(input_truth_graph, dim=1)
     if undirected:
-        input_pred_graph = torch.cat(
-            [input_pred_graph, input_pred_graph.flip(0)], dim=1
-        )
+        input_pred_graph = torch.cat([input_pred_graph, input_pred_graph.flip(0)], dim=1)
 
     unique_edges, inverse = torch.unique(
         torch.cat([input_pred_graph, input_truth_graph], dim=1),
@@ -159,9 +149,7 @@ def graph_intersection(
     if undirected:
         input_pred_graph = input_pred_graph[:, : input_pred_graph.shape[1] // 2]
         pred_to_truth = torch.max(pred_to_truth.reshape(2, -1), dim=0)[0]
-        truth_to_pred[
-            truth_to_pred >= input_pred_graph.shape[1]
-        ] -= input_pred_graph.shape[1]
+        truth_to_pred[truth_to_pred >= input_pred_graph.shape[1]] -= input_pred_graph.shape[1]
 
     return_tensors = []
 
@@ -207,9 +195,7 @@ def make_mlp(
         if layer_norm:
             layers.append(nn.LayerNorm(sizes[i + 1], elementwise_affine=False))
         if batch_norm:
-            layers.append(
-                nn.BatchNorm1d(sizes[i + 1], track_running_stats=False, affine=False)
-            )
+            layers.append(nn.BatchNorm1d(sizes[i + 1], track_running_stats=False, affine=False))
         layers.append(hidden_activation())
     # Final layer
     layers.append(nn.Linear(sizes[-2], sizes[-1]))
@@ -217,8 +203,6 @@ def make_mlp(
         if layer_norm:
             layers.append(nn.LayerNorm(sizes[-1], elementwise_affine=False))
         if batch_norm:
-            layers.append(
-                nn.BatchNorm1d(sizes[-1], track_running_stats=False, affine=False)
-            )
+            layers.append(nn.BatchNorm1d(sizes[-1], track_running_stats=False, affine=False))
         layers.append(output_activation())
     return nn.Sequential(*layers)

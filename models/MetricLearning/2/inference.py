@@ -52,7 +52,7 @@ class MetricLearningInferenceConfig:
     model_path: str | Path
     device: str
     auto_cast: bool
-    compling: bool
+    compiling: bool
     debug: bool
     save_debug_data: bool = False
     save_input_data: bool = False
@@ -112,8 +112,8 @@ class MetricLearningInference:
         self.gnn_model = torch.jit.load(gnn_path).to(self.config.device, non_blocking=True).eval()
         print("Models loaded successfully", self.gnn_model)
 
-        if self.config.compling:
-            print("compling models do not work now...")
+        if self.config.compiling:
+            print("compiling models do not work now...")
             # self.embedding_model = torch.compile(self.embedding_model)
             # self.filter_model.gnn = torch.compile(self.filter_model.gnn)
             # self.filter_model.net = torch.compile(self.filter_model.net)
@@ -410,7 +410,7 @@ def create_metric_learning_end2end_rel24(
         model_path=model_path,
         device=device,
         auto_cast=auto_cast,
-        compling=compiling,
+        compiling=compiling,
         debug=debug,
         save_debug_data=save_data_for_debug,
         r_max=0.12,

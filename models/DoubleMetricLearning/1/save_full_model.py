@@ -90,9 +90,7 @@ def model_save(
             input_names.append("edge_attr")
             dynamic_axes["edge_attr"] = {0: "num_edges"}
 
-        is_recurrent = (
-            model_config["node_net_recurrent"] and model_config["edge_net_recurrent"]
-        )
+        is_recurrent = model_config["node_net_recurrent"] and model_config["edge_net_recurrent"]
         print(f"Is a recurrent GNN?: {is_recurrent}")
         if is_recurrent:
             print("Use RecurrentInteractionGNN2")
@@ -188,9 +186,7 @@ def model_save(
             assert torch.allclose(ort_outs, output, atol=threashold, rtol=threashold)
             break
         except AssertionError:
-            print(
-                f"Output mismatch within {threashold}, trying again with higher threashold."
-            )
+            print(f"Output mismatch within {threashold}, trying again with higher threashold.")
             threashold *= 10
     print(f"ONNX output matches within {threashold:.0E}.")
 
@@ -202,9 +198,7 @@ if __name__ == "__main__":
     parser.add_argument("config", type=str, help="configuration file")
     parser.add_argument("-o", "--output", type=str, help="Output path", default=".")
     parser.add_argument("-t", "--tag", type=str, default=None, help="version name")
-    parser.add_argument(
-        "-c", "--checkpoint", type=str, help="checkpoint path", default=None
-    )
+    parser.add_argument("-c", "--checkpoint", type=str, help="checkpoint path", default=None)
     args = parser.parse_args()
 
     config_file = Path(args.config)

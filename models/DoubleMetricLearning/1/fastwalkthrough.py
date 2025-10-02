@@ -242,7 +242,9 @@ def process_sorted_nodes(sorted_hit_ids, numba_edges, allow_node_reuse):
         if hit_id in used_nodes:
             continue
 
-        complete_paths, complete_branching_scores = find_paths(hit_id, numba_edges, used_nodes, allow_node_reuse)
+        complete_paths, complete_branching_scores = find_paths(
+            hit_id, numba_edges, used_nodes, allow_node_reuse
+        )
 
         if complete_paths:
             resolved_path = find_most_likely_local_path(complete_paths, complete_branching_scores)

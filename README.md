@@ -31,3 +31,12 @@ Supported models are saved in the [model_repos](model_repos) directory.
 ```bash
 podman-hpc build --format docker -f Dockerfile -t docexoty/tritonserver
 ```
+
+
+### Install packages.
+```
+poetry env use /global/common/software/nersc/pe/conda-envs/24.1.0/python-3.11/nersc-python/bin/python
+
+poetry install
+
+```

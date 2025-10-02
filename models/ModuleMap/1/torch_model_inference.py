@@ -14,10 +14,10 @@ def run_torch_model(model: torch.nn.Module, auto_cast: bool, *inputs):
     assert len(inputs) > 0, "At least one input must be provided."
     with torch.inference_mode():
         # device = next(model.parameters()).device
-        device_type = "cuda:0" #device.type if hasattr(device, 'type') else str(device)
+        device_type = "cuda:0"  # device.type if hasattr(device, 'type') else str(device)
         if auto_cast and check_autocast_support(device_type):
             with torch.autocast(device_type, dtype=dtype):
-                output = model(*inputs).clone() # .to(torch.float32)
+                output = model(*inputs).clone()  # .to(torch.float32)
                 # print("compiled amp:", timed(lambda: model(*inputs))[1])
         else:
             output = model(*inputs).clone()
@@ -42,24 +42,22 @@ def run_gnn_filter(
                 filter_scores = [
                     model.net(
                         torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
-                    ).squeeze(-1).clone()
+                    )
+                    .squeeze(-1)
+                    .clone()
                     for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
                 ]
         else:
             gnn_embedding = model.gnn(x, sorted_edge_index).clone()
             filter_scores = [
-                model.net(
-                    torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
-                ).squeeze(-1).clone()
+                model.net(torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1))
+                .squeeze(-1)
+                .clone()
                 for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
             ]
     filter_scores = torch.cat(filter_scores).sigmoid()
     return filter_scores, sorted_edge_index, gnn_embedding
 
-
-import torch
-
-# Assume sort_edge_index, check_autocast_support, dtype are defined as before
 
 def run_gnn_filter_optimized(
     model: torch.nn.Module,
@@ -68,24 +66,25 @@ def run_gnn_filter_optimized(
     x: torch.Tensor,
     edge_index: torch.Tensor,
     # Add a batch_size parameter to control memory usage
-
 ):
     batches = 2**16
     with torch.inference_mode():
         sorted_edge_index = sort_edge_index(edge_index, sort_by_row=False)
-        device_type = x.device.type if hasattr(x, 'device') else str(x.device)
+        device_type = x.device.type if hasattr(x, "device") else str(x.device)
         num_edges = sorted_edge_index.shape[1]
 
         filter_scores = []
 
-        with torch.autocast(device_type, dtype=dtype, enabled=auto_cast and check_autocast_support(device_type)):
+        with torch.autocast(
+            device_type, dtype=dtype, enabled=auto_cast and check_autocast_support(device_type)
+        ):
             # GNN embeddings are calculated only once
             gnn_embedding = model.gnn(x, sorted_edge_index)
 
             # Process edges in batches to control memory
             for i in range(0, num_edges, batches):
                 # 1. Get the current batch of edges
-                edge_batch = sorted_edge_index[:, i:i + batches]
+                edge_batch = sorted_edge_index[:, i : i + batches]
 
                 # 2. Gather embeddings for the current batch
                 source_nodes = gnn_embedding[edge_batch[0]]
