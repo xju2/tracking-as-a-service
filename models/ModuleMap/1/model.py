@@ -39,6 +39,16 @@ class TritonPythonModel:
         self.model_config = model_config = json.loads(args["model_config"])
         self.model_instance_device_id = json.loads(args["model_instance_device_id"])
 
+        # store device in consistent format.
+        if torch.cuda.is_available():
+            self.device = f"cuda:{self.model_instance_device_id}"
+            self.device_id = self.model_instance_device_id
+        else:
+            self.device = "cpu"
+            self.device_id = "cpu"
+
+        torch.cuda.set_device(self.device_id)
+
         parameters = model_config["parameters"]
         self.debug = False
         if "debug" in parameters:
@@ -103,7 +113,7 @@ class TritonPythonModel:
         # and create a pb_utils.InferenceResponse for each of them.
         for request in requests:
             features = pb_utils.get_input_tensor_by_name(request, "FEATURES")
-            features = from_dlpack(features.to_dlpack()).to(self.model_instance_device_id)
+            features = from_dlpack(features.to_dlpack()).to(self.device)
             if self.debug:
                 print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
 
