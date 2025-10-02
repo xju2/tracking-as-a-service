@@ -2,11 +2,23 @@
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+[project]
+name = "tracking-as-a-service"
+version = "0.1.0.dev0"
+description = "Tracking as a Service."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = {file = "LICENSE"}
+keywords = ["tracking", "HEP", "Triton", "IaaS"]
+authors = [
+  {name = "X. Ju", email = "xju@lbl.gov" }
+]
+
+
 [tool.ruff]
 line-length = 99
 preview = true
 exclude = ["*.ipynb"]
-
 [tool.ruff.format]
 docstring-code-format = true
 quote-style = "double"

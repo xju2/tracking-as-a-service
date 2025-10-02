@@ -1,36 +1,28 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from operator import itemgetter
 
+import fastwalkthrough as walkutils
 import frnn
-import networkx as nx
 import numpy as np
 import torch
-from torch_geometric.data import Data
-from torch_geometric.transforms import RemoveIsolatedNodes
-from torch_geometric.utils import to_networkx
 import torch.cuda.nvtx as nvtx
-
-from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
-import fastwalkthrough as walkutils
-import time
-import torch
-import yaml
-import onnxruntime as ort
-
-from metric_learning import MetricLearning
 from interaction_gnn import (
-    RecurrentInteractionGNN2,
     ChainedInteractionGNN2,
     GNNFilterJitable,
+    RecurrentInteractionGNN2,
 )
+from metric_learning import MetricLearning
+from torch_geometric.data import Data
+from torch_geometric.transforms import RemoveIsolatedNodes
+from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
 
 # from triton_radius_nn import build_edges_triton as build_edges
 
 torch.manual_seed(42)
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
 
 # def timed(fn):
 #     start = torch.cuda.Event(enable_timing=True)
@@ -149,9 +141,7 @@ class MetricLearningInference:
         model_config = checkpoint["hyper_parameters"]
         state_dict = checkpoint["state_dict"]
 
-        is_recurrent = (
-            model_config["node_net_recurrent"] and model_config["edge_net_recurrent"]
-        )
+        is_recurrent = model_config["node_net_recurrent"] and model_config["edge_net_recurrent"]
         print(f"Is a recurrent GNN?: {is_recurrent}")
 
         if is_recurrent:
@@ -166,18 +156,23 @@ class MetricLearningInference:
         self.gnn_model = new_gnn
         self.gnn_model.to(self.config.device).eval()
 
-
         if self.config.compling:
             print("compling models works now...")
-            torch.set_float32_matmul_precision('high')
+            torch.set_float32_matmul_precision("high")
             # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
-            self.embedding_model = torch.compile(self.embedding_model, dynamic=True, mode="max-autotune")
+            self.embedding_model = torch.compile(
+                self.embedding_model, dynamic=True, mode="max-autotune"
+            )
             # # Compile GNNFilter
-            self.filter_model.gnn = torch.compile(self.filter_model.gnn, dynamic=True, mode="max-autotune")
-            self.filter_model.net = torch.compile(self.filter_model.net, dynamic=True, mode="max-autotune")
+            self.filter_model.gnn = torch.compile(
+                self.filter_model.gnn, dynamic=True, mode="max-autotune"
+            )
+            self.filter_model.net = torch.compile(
+                self.filter_model.net, dynamic=True, mode="max-autotune"
+            )
             # # Compile interaction gnn
             self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
-            #self.embedding_model.eval()
+            # self.embedding_model.eval()
             # self.filter_model.eval()
             # self.gnn_model.eval()
 
@@ -228,7 +223,12 @@ class MetricLearningInference:
             "cluster_eta_2",
         ]
 
-    def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None, nvtx_enabled: bool = False):
+    def forward(
+        self,
+        node_features: torch.Tensor,
+        hit_id: torch.Tensor | None = None,
+        nvtx_enabled: bool = False,
+    ):
         device = self.config.device
         debug = self.config.debug
         save_debug_data = self.config.save_debug_data
@@ -426,9 +426,13 @@ class MetricLearningInference:
         # t0 = time.time()
         if nvtx_enabled:
             nvtx.range_push("GNN Inference")
-        edge_scores = run_torch_model(
-            self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
-        ).sigmoid().to(torch.float32)
+        edge_scores = (
+            run_torch_model(
+                self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
+            )
+            .sigmoid()
+            .to(torch.float32)
+        )
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
@@ -436,7 +440,6 @@ class MetricLearningInference:
         if nvtx_enabled:
             nvtx.range_pop()
         # print(f"run_torch_model (GNN) time: {time.time() - t0:.4f} s")
-
 
         # CC and Walkthrough
         # if nvtx_enabled:
@@ -505,7 +508,12 @@ class MetricLearningInference:
 
         return track_candidates
 
-    def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None, nvtx_enabled: bool = False):
+    def __call__(
+        self,
+        node_features: torch.Tensor,
+        hit_id: torch.Tensor | None = None,
+        nvtx_enabled: bool = False,
+    ):
         return self.forward(node_features, hit_id=hit_id, nvtx_enabled=nvtx_enabled)
 
 
@@ -588,7 +596,7 @@ if __name__ == "__main__":
         num_trials = 10
         print(">>> Starting NSYS-captured inference")
         nvtx.range_push("Inference_Loop")
-        for _ in range(num_trials): #tqdm(range(num_trials)):
+        for _ in range(num_trials):  # tqdm(range(num_trials)):
             track_ids = inference(node_features, nvtx_enabled=True)
             # print("time for one inference:", timed(lambda: inference(node_features))[1])
         nvtx.range_pop()
