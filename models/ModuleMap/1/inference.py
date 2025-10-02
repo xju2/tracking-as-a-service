@@ -16,7 +16,6 @@ import pymmg.mmg_wrapper as mmg
 from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
 import fastwalkthrough as walkutils
 import time
-import torch
 import yaml
 import onnxruntime as ort
 
@@ -28,7 +27,7 @@ from interaction_gnn import (
 )
 
 torch.manual_seed(42)
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
 
 
 @dataclass
@@ -37,7 +36,7 @@ class ModuleMapInferenceConfig:
     module_map_pattern_path: str | Path
     device: str
     auto_cast: bool
-    compling: bool
+    compiling: bool
     debug: bool
     save_debug_data: bool = False
     r_max: float = 0.12
@@ -73,7 +72,9 @@ class ModuleMapInferenceConfig:
             Path(self.model_path) if isinstance(self.model_path, str) else self.model_path
         )
         self.module_map_pattern_path = (
-            Path(self.module_map_pattern_path) if isinstance(self.module_map_pattern_path, str) else self.module_map_pattern_path
+            Path(self.module_map_pattern_path)
+            if isinstance(self.module_map_pattern_path, str)
+            else self.module_map_pattern_path
         )
 
 
@@ -87,17 +88,7 @@ class ModuleMapInference:
             else self.config.model_path
         )
         self.config.module_map_pattern_path = "/pscratch/sd/a/alazar/tracking-as-a-service/models/ModuleMap/1/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
-        module_map_pattern_path = (
-            Path(self.config.module_map_pattern_path)
-            if not isinstance(self.config.module_map_pattern_path, Path)
-            else self.config.module_map_pattern_path
-        )
-
-        # Load checkpoints instead of .pt files
-        # Find checkpoint directory
-        # self.config.module_map_pattern_path = "/global/cfs/cdirs/m4439/mmg/MMG/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
-
-        print("Path: ",self.config.module_map_pattern_path)
+        print("Path: ", self.config.module_map_pattern_path)
         mmg.init_graph_builder(self.config.module_map_pattern_path)
         gnn_path = model_path / "MM_minmax_gnn.ckpt"
 
@@ -108,9 +99,7 @@ class ModuleMapInference:
         model_config = checkpoint["hyper_parameters"]
         state_dict = checkpoint["state_dict"]
 
-        is_recurrent = (
-            model_config["node_net_recurrent"] and model_config["edge_net_recurrent"]
-        )
+        is_recurrent = model_config["node_net_recurrent"] and model_config["edge_net_recurrent"]
         print(f"Is a recurrent GNN?: {is_recurrent}")
 
         if is_recurrent:
@@ -125,20 +114,22 @@ class ModuleMapInference:
         self.gnn_model = new_gnn
         self.gnn_model.to(self.config.device).eval()
 
-
-        if self.config.compling:
-            print("compling models works now...")
-            torch.set_float32_matmul_precision('high')
+        if self.config.compiling:
+            print("compiling models works now...")
+            torch.set_float32_matmul_precision("high")
             # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
-            self.embedding_model = torch.compile(self.embedding_model, dynamic=True, mode="max-autotune")
+            self.embedding_model = torch.compile(
+                self.embedding_model, dynamic=True, mode="max-autotune"
+            )
             # # Compile GNNFilter
-            self.filter_model.gnn = torch.compile(self.filter_model.gnn, dynamic=True, mode="max-autotune")
-            self.filter_model.net = torch.compile(self.filter_model.net, dynamic=True, mode="max-autotune")
+            self.filter_model.gnn = torch.compile(
+                self.filter_model.gnn, dynamic=True, mode="max-autotune"
+            )
+            self.filter_model.net = torch.compile(
+                self.filter_model.net, dynamic=True, mode="max-autotune"
+            )
             # # Compile interaction gnn
             self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
-            #self.embedding_model.eval()
-            # self.filter_model.eval()
-            # self.gnn_model.eval()
 
         self.input_node_features = [
             "x",
@@ -159,11 +150,14 @@ class ModuleMapInference:
             "cluster_eta_2",
         ]
 
-    def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None, nvtx_enabled: bool = False):
+    def forward(
+        self,
+        node_features: torch.Tensor,
+        hit_id: torch.Tensor | None = None,
+        nvtx_enabled: bool = False,
+    ):
         device = self.config.device
         debug = self.config.debug
-        save_debug_data = self.config.save_debug_data
-        out_debug_data_name = "debug_data.pt"
 
         track_candidates = np.array([-1], dtype=np.int64)
         if node_features is None or node_features.shape[0] < 3:
@@ -175,141 +169,34 @@ class ModuleMapInference:
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=device)
 
-
         if nvtx_enabled:
             nvtx.range_push("MM Inference one event")
-
-        # embedding_inputs = node_features[
-        #     :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
-        # ]
-        # embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
-
-        # # torch.cuda.synchronize()
-        # # t0 = time.time()
-        # embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
-        # torch.cuda.synchronize()
-        # if nvtx_enabled:
-        #     nvtx.range_pop()
-        # # torch.cuda.synchronize()
-        # # print(f"run_torch_model (embedding) time: {time.time() - t0:.4f} s")
-
-        # if debug:
-        #     print(f"after embedding, shape = {embedding.shape}")
-        #     print("embedding data", embedding[0])
-        #     print("embedding data type", embedding.dtype)
-
-        # out_data = Data()
-        # if save_debug_data:
-        #     out_data = Data(
-        #         embedding_inputs=embedding_inputs, embedding=embedding, node_features=node_features
-        #     )
-
-        # # delete the embedding inputs if not needed.
-        # if self.config.filter_node_features == self.config.embedding_node_features:
-        #     filtering_inputs = embedding_inputs
-        # else:
-        #     del embedding_inputs
-        #     filtering_inputs = node_features[
-        #         :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
-        #     ]
-        #     filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
-
-        # if save_debug_data:
-        #     out_data.filtering_nodes = filtering_inputs
 
         # Build edges
         if nvtx_enabled:
             nvtx.range_push("Build Edges")
-        # torch.cuda.synchronize()
-        # t0 = time.time()
-        # self.config.k_max  = 1024
 
         event_id_np = "000001150"
 
         edge_index = mmg.build_edge_index(
-                event_id_np,
-                hit_id.cpu(),
-                node_features[:, self.input_node_features.index("module_id")].cpu(),
-                node_features[:, self.input_node_features.index("x")].cpu(),
-                node_features[:, self.input_node_features.index("y")].cpu(),
-                node_features[:, self.input_node_features.index("z")].cpu(),
-                hit_id.shape[0],
-            )
-
-        # torch.cuda.synchronize()
-        # if nvtx_enabled:
-        #     nvtx.range_pop()
-        # # torch.cuda.synchronize()
-        # # print(f"build_edges time: {time.time() - t0:.4f} s")
+            event_id_np,
+            hit_id.cpu(),
+            node_features[:, self.input_node_features.index("module_id")].cpu(),
+            node_features[:, self.input_node_features.index("x")].cpu(),
+            node_features[:, self.input_node_features.index("y")].cpu(),
+            node_features[:, self.input_node_features.index("z")].cpu(),
+            hit_id.shape[0],
+        )
 
         if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
         edge_index = edge_index.to(device)
 
-
-        # if save_debug_data:
-        #     out_data.embedding_edge_list = edge_index
-
-        # if edge_index.shape[1] < 2:
-        #     if save_debug_data:
-        #         torch.save(out_data, out_debug_data_name)
-        #     return track_candidates
-
-        # edge_index = edge_index.to(device).long()
         # # order the edges by their distance from the collision point.
         R = (
             node_features[:, self.input_node_features.index("r")] ** 2
             + node_features[:, self.input_node_features.index("z")] ** 2
         )
-        # edge_flip_mask = (R[edge_index[0]] > R[edge_index[1]]) | (
-        #     (R[edge_index[0]] == R[edge_index[1]]) & (edge_index[0] > edge_index[1])
-        # )
-        # edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
-        # edge_index = torch.unique(edge_index, dim=-1)
-
-        # if debug:
-        #     print(f"after removing duplications: {edge_index.shape[1]:,}")
-
-        # if save_debug_data:
-        #     out_data.filter_edge_list_before = edge_index
-
-        # # GNNFiltering
-        # if nvtx_enabled:
-        #     nvtx.range_push("GNN Filtering")
-        # # torch.cuda.synchronize()
-        # # t0 = time.time()
-        # edge_scores, edge_index, _ = run_gnn_filter_optimized(
-        #     self.filter_model,
-        #     self.config.auto_cast,
-        #     self.config.filter_batches,
-        #     filtering_inputs,
-        #     edge_index,
-        # )
-        # torch.cuda.synchronize()
-        # if nvtx_enabled:
-        #     nvtx.range_pop()
-        # # torch.cuda.synchronize()
-        # # print(f"run_torch_model (filtering) time: {time.time() - t0:.4f} s")
-
-        # if debug:
-        #     print("edge_score", edge_scores[:10])
-        #     print("edge_index", edge_index[:, :10])
-
-        # if save_debug_data:
-        #     out_data.filter_node_features = filtering_inputs
-        #     out_data.filter_scores = edge_scores
-        #     out_data.filter_edge_list_after = edge_index
-
-        # # apply fitlering score cuts.
-        # edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
-        # # del edge_scores
-        # if edge_index.shape[1] < 2:
-        #     return track_candidates
-
-        # if debug:
-        #     print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
-        # torch.cuda.synchronize()
-        # prepare GNN inputs
 
         gnn_input = node_features[
             :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
@@ -363,34 +250,22 @@ class ModuleMapInference:
         edge_features_dict = calculate_edge_features()
         edge_features = torch.stack(list(edge_features_dict.values()), dim=1)
 
-        # torch.cuda.synchronize()
-        # t0 = time.time()
         if nvtx_enabled:
             nvtx.range_push("GNN Inference")
 
-        edge_scores = run_torch_model(
-            self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
-        ).sigmoid().to(torch.float32)
+        edge_scores = (
+            run_torch_model(
+                self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
+            )
+            .sigmoid()
+            .to(torch.float32)
+        )
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
-        # print(f"run_torch_model (GNN) time: {time.time() - t0:.4f} s")
-
-
-        # CC and Walkthrough
-        # if nvtx_enabled:
-        #     nvtx.range_push("CC and Walkthrough")
-        if debug:
-            print("After GNN...")
-
-        if save_debug_data:
-            out_data.gnn_scores = edge_scores
-            out_data.gnn_edge_lists = edge_index
-            out_data.gnn_edge_features = edge_features
-            out_data.gnn_node_features = gnn_input
 
         good_edge_mask = edge_scores > self.config.cc_cut
         edge_index = edge_index[:, good_edge_mask]
@@ -438,16 +313,14 @@ class ModuleMapInference:
             track_candidates[i] = -1
             i += 1
 
-        # write candidates to a file.
-        if debug:
-            print("track_candidates", track_candidates[:20])
-        if save_debug_data:
-            out_data.track_candidates = torch.from_numpy(track_candidates).to(torch.int64)
-            torch.save(out_data, out_debug_data_name)
-
         return track_candidates
 
-    def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None, nvtx_enabled: bool = False):
+    def __call__(
+        self,
+        node_features: torch.Tensor,
+        hit_id: torch.Tensor | None = None,
+        nvtx_enabled: bool = False,
+    ):
         return self.forward(node_features, hit_id=hit_id, nvtx_enabled=nvtx_enabled)
 
 
@@ -466,7 +339,7 @@ def create_module_map_end2end_rel24(
         module_map_pattern_path=module_map_pattern_path,
         device=device,
         auto_cast=auto_cast,
-        compling=compiling,
+        compiling=compiling,
         debug=debug,
         save_debug_data=save_data_for_debug,
         r_max=0.12,
@@ -495,7 +368,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inference for ModuleMap pipeline")
     parser.add_argument("-i", "--input", type=str, default="node_features.pt", help="Input file")
     parser.add_argument("-m", "--model", type=str, default="./", help="Model path")
-    parser.add_argument("-mmp", "--module_map_pattern_path", type=str, default="./", help="Module map pattern path")
+    parser.add_argument(
+        "-mmp", "--module_map_pattern_path", type=str, default="./", help="Module map pattern path"
+    )
     parser.add_argument("-p", "--precision", type=str, default="highest", help="Precision")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")
@@ -510,7 +385,9 @@ if __name__ == "__main__":
     if not Path(args.model).exists():
         raise FileNotFoundError(f"Model path {args.model} does not exist.")
     if not Path(args.module_map_pattern_path).exists():
-        raise FileNotFoundError(f"Module map pattern path {args.module_map_pattern_path} does not exist.")
+        raise FileNotFoundError(
+            f"Module map pattern path {args.module_map_pattern_path} does not exist."
+        )
 
     inference = create_module_map_end2end_rel24(
         model_path=args.model,
@@ -527,7 +404,7 @@ if __name__ == "__main__":
     track_ids = inference(node_features, nvtx_enabled=False)
 
     # time the inference function.
-    if True: # args.timing:
+    if True:  # args.timing:
         import time
 
         from tqdm import tqdm
@@ -536,7 +413,7 @@ if __name__ == "__main__":
         num_trials = 10
         print(">>> Starting NSYS-captured inference")
         nvtx.range_push("Inference_Loop")
-        for _ in range(num_trials): #tqdm(range(num_trials)):
+        for _ in range(num_trials):  # tqdm(range(num_trials)):
             track_ids = inference(node_features, nvtx_enabled=True)
             # print("time for one inference:", timed(lambda: inference(node_features))[1])
         nvtx.range_pop()

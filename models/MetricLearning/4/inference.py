@@ -19,19 +19,9 @@ from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
 from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
 
-# from triton_radius_nn import build_edges_triton as build_edges
 
 torch.manual_seed(42)
 torch.set_float32_matmul_precision("high")
-
-# def timed(fn):
-#     start = torch.cuda.Event(enable_timing=True)
-#     end = torch.cuda.Event(enable_timing=True)
-#     start.record()
-#     result = fn()
-#     end.record()
-#     torch.cuda.synchronize()
-#     return result, start.elapsed_time(end) / 1000
 
 
 def build_edges(
@@ -68,7 +58,7 @@ class MetricLearningInferenceConfig:
     model_path: str | Path
     device: str
     auto_cast: bool
-    compling: bool
+    compiling: bool
     debug: bool
     save_debug_data: bool = False
     r_max: float = 0.12
@@ -115,26 +105,25 @@ class MetricLearningInference:
             else self.config.model_path
         )
 
+        device = self.config.device
         # Load checkpoints instead of .pt files
         # Find checkpoint directory
         embedding_path = model_path / "embedding.ckpt"
         filtering_path = model_path / "filter.ckpt"
         gnn_path = model_path / "gnn.ckpt"
 
-        # load the checkpoint
-
         print(f"Loading checkpoint from {embedding_path}")
         checkpoint = torch.load(embedding_path, map_location="cpu")
         self.embedding_model = MetricLearning(checkpoint["hyper_parameters"])
         self.embedding_model.load_state_dict(checkpoint["state_dict"])
-        self.embedding_model.to(self.config.device).eval()
+        self.embedding_model.to(device).eval()
 
         print(f"Loading checkpoint from {filtering_path}")
         checkpoint = torch.load(filtering_path, map_location="cpu")
         new_model = GNNFilterJitable(checkpoint["hyper_parameters"])
         new_model.load_state_dict(checkpoint["state_dict"])
         self.filter_model = new_model
-        self.filter_model.to(self.config.device).eval()
+        self.filter_model.to(device).eval()
 
         print(f"Loading checkpoint from {gnn_path}")
         checkpoint = torch.load(gnn_path, map_location="cpu")
@@ -154,10 +143,16 @@ class MetricLearningInference:
         new_gnn.load_state_dict(state_dict)
 
         self.gnn_model = new_gnn
-        self.gnn_model.to(self.config.device).eval()
+        self.gnn_model.to(device).eval()
 
-        if self.config.compling:
-            print("compling models works now...")
+        self.embedding_scale = torch.tensor(
+            self.config.embedding_node_scale, device=device
+        ).float()
+        self.filter_scale = torch.tensor(self.config.filter_node_scale, device=device).float()
+        self.gnn_scale = torch.tensor(self.config.gnn_node_scale, device=device).float()
+
+        if self.config.compiling:
+            print("compiling models works now...")
             torch.set_float32_matmul_precision("high")
             # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
             self.embedding_model = torch.compile(
@@ -256,14 +251,10 @@ class MetricLearningInference:
         ]
         embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
 
-        # torch.cuda.synchronize()
-        # t0 = time.time()
         embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
-        # torch.cuda.synchronize()
-        # print(f"run_torch_model (embedding) time: {time.time() - t0:.4f} s")
 
         if debug:
             print(f"after embedding, shape = {embedding.shape}")
@@ -292,17 +283,13 @@ class MetricLearningInference:
         # Build edges
         if nvtx_enabled:
             nvtx.range_push("Build Edges")
-        # torch.cuda.synchronize()
-        # t0 = time.time()
-        # self.config.k_max  = 1024
+
         edge_index = build_edges(
             embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
-        # torch.cuda.synchronize()
-        # print(f"build_edges time: {time.time() - t0:.4f} s")
 
         if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
@@ -337,8 +324,7 @@ class MetricLearningInference:
         # GNNFiltering
         if nvtx_enabled:
             nvtx.range_push("GNN Filtering")
-        # torch.cuda.synchronize()
-        # t0 = time.time()
+
         edge_scores, edge_index, _ = run_gnn_filter_optimized(
             self.filter_model,
             self.config.auto_cast,
@@ -349,8 +335,6 @@ class MetricLearningInference:
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
-        # torch.cuda.synchronize()
-        # print(f"run_torch_model (filtering) time: {time.time() - t0:.4f} s")
 
         if debug:
             print("edge_score", edge_scores[:10])
@@ -361,7 +345,7 @@ class MetricLearningInference:
             out_data.filter_scores = edge_scores
             out_data.filter_edge_list_after = edge_index
 
-        # apply fitlering score cuts.
+        # apply filtering score cuts.
         edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
         # del edge_scores
         if edge_index.shape[1] < 2:
@@ -439,11 +423,7 @@ class MetricLearningInference:
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
-        # print(f"run_torch_model (GNN) time: {time.time() - t0:.4f} s")
 
-        # CC and Walkthrough
-        # if nvtx_enabled:
-        #     nvtx.range_push("CC and Walkthrough")
         if debug:
             print("After GNN...")
 
@@ -470,11 +450,7 @@ class MetricLearningInference:
 
         all_trkx = {}
         all_trkx["cc"], graph = walkutils.get_simple_path(graph)
-        if debug:
-            print("the graph information")
-            # with open("graph_info.txt", "w") as f:
-            #     f.write(f"{G.nodes(data=True)}\n")
-            #     f.write(f"{G.edges(data=True)}\n")
+
         all_trkx["walk"] = walkutils.walk_through(
             graph, score_name, self.config.walk_min, self.config.walk_max, False
         )
@@ -530,7 +506,7 @@ def create_metric_learning_end2end_rel24(
         model_path=model_path,
         device=device,
         auto_cast=auto_cast,
-        compling=compiling,
+        compiling=compiling,
         debug=debug,
         save_debug_data=save_data_for_debug,
         r_max=0.12,

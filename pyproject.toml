@@ -36,3 +36,8 @@ ignore = [
     "RET504", "SLF001",
     "TD003", "ARG002", "N999", "TRY201", "TRY003", "ANN", "CPY", "INP001"
 ]
+
+[tool.poetry.dependencies]
+torch = "^2.8.0"
+torch-geometric = "^2.6.1"
+numba = "^0.62.1"

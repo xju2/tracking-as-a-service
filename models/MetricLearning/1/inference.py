@@ -49,7 +49,7 @@ class MetricLearningInferenceConfig:
     model_path: str | Path
     device: str
     auto_cast: bool
-    compling: bool
+    compiling: bool
     debug: bool
     save_debug_data: bool = False
     r_max: float = 0.12
@@ -68,7 +68,9 @@ class MetricLearningInferenceConfig:
 
     def __post_init__(self):
         self.embedding_node_features = [x.strip() for x in self.embedding_node_features.split(",")]
-        self.embedding_node_scale = [float(x.strip()) for x in self.embedding_node_scale.split(",")]
+        self.embedding_node_scale = [
+            float(x.strip()) for x in self.embedding_node_scale.split(",")
+        ]
         assert len(self.embedding_node_features) == len(self.embedding_node_scale)
 
         self.filter_node_features = [x.strip() for x in self.filter_node_features.split(",")]
@@ -100,8 +102,8 @@ class MetricLearningInference:
         )
         self.gnn_model = torch.jit.load(gnn_path).to(self.config.device, non_blocking=True).eval()
 
-        if self.config.compling:
-            print("compling models do not work now...")
+        if self.config.compiling:
+            print("compiling models do not work now...")
             # self.embedding_model = torch.compile(self.embedding_model)
             # self.filter_model.gnn = torch.compile(self.filter_model.gnn)
             # self.filter_model.net = torch.compile(self.filter_model.net)
@@ -393,7 +395,7 @@ def create_metric_learning_end2end_rel24(
         model_path=model_path,
         device=device,
         auto_cast=auto_cast,
-        compling=compiling,
+        compiling=compiling,
         debug=debug,
         r_max=0.12,
         k_max=1000,
