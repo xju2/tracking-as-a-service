@@ -195,6 +195,12 @@ def max_add_cuts(graph, score_name, th_min, th_add):
 
     final_mask = mask_max | mask_add
 
+    not_first_mask = torch.isin(edge_index[0], edge_index[1])
+    out, argmax = scatter_max(edge_scores, edge_index[1], dim=0)
+    mask_imcoming_max = torch.zeros_like(mask_min, dtype=torch.bool)
+    mask_imcoming_max[argmax[argmax < len(mask_imcoming_max)]] = True
+    final_mask = (not_first_mask | mask_imcoming_max) & final_mask
+
     subgraph = graph.edge_subgraph(final_mask)
 
     transform = RemoveIsolatedNodes()
@@ -216,6 +222,19 @@ def find_longest_path(complete_paths):
 
 
 @njit
+def find_most_likely_local_path(complete_paths, complete_branching_scores):
+    best_path = List.empty_list(types.int64)
+    best_score = List.empty_list(types.float64)
+    for path, branching_score in zip(complete_paths, complete_branching_scores):
+        if branching_score > best_score:
+            best_score.clear()
+            best_score.extend(branching_score)
+            best_path.clear()
+            best_path.extend(path)
+    return best_path
+
+
+@njit
 def process_sorted_nodes(sorted_hit_ids, numba_edges, allow_node_reuse):
     tracks = List()
     used_nodes = Dict.empty(key_type=types.int64, value_type=types.boolean)
@@ -223,13 +242,13 @@ def process_sorted_nodes(sorted_hit_ids, numba_edges, allow_node_reuse):
         if hit_id in used_nodes:
             continue
 
-        complete_paths = find_paths(hit_id, numba_edges, used_nodes, allow_node_reuse)
+        complete_paths, complete_branching_scores = find_paths(hit_id, numba_edges, used_nodes, allow_node_reuse)
 
         if complete_paths:
-            longest_path = complete_paths[0]
-            if len(longest_path) > 1:
-                tracks.append(longest_path)
-                for node in longest_path:
+            resolved_path = find_most_likely_local_path(complete_paths, complete_branching_scores)
+            if len(resolved_path) > 1:
+                tracks.append(resolved_path)
+                for node in resolved_path:
                     used_nodes[node] = True
 
     return tracks
@@ -247,14 +266,23 @@ def find_paths(start_node, edges, used_nodes, allow_node_reuse):
     paths.append(List([start_node]))
     complete_paths = List()
 
+    branching_scores = List()
+    branching_scores.append(List([0.0]))
+    complete_branching_scores = List()
+
     while len(paths) > 0:
+        old_complete_paths = complete_paths.copy()
+        old_complete_branching_scores = complete_branching_scores.copy()
+        complete_branching_scores.clear()
         complete_paths.clear()
         for i in range(len(paths)):
             path = paths.pop(0)
+            branching_score = branching_scores.pop(0)
             current_node = path[-1]
 
             if current_node not in edges:
                 complete_paths.append(path)
+                complete_branching_scores.append(branching_score)
                 continue
 
             num_branches = 0
@@ -267,9 +295,20 @@ def find_paths(start_node, edges, used_nodes, allow_node_reuse):
                 paths.append(new_path)
             if num_branches == 0:
                 complete_paths.append(path)
+                complete_branching_scores.append(branching_score)
                 continue
+            for neighbor in edges[current_node]:
+                if not allow_node_reuse and neighbor in used_nodes:
+                    continue
+                new_branching_score = branching_score.copy()
+                if num_branches > 1:
+                    new_branching_score.append(edges[current_node][neighbor])
+                branching_scores.append(new_branching_score)
 
-    return complete_paths
+    complete_paths.extend(old_complete_paths)
+    complete_branching_scores.extend(old_complete_branching_scores)
+
+    return complete_paths, complete_branching_scores
 
 
 inner_dict_type = types.DictType(types.int64, types.float64)

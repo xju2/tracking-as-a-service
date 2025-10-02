@@ -20,7 +20,7 @@ import torch
 import yaml
 import onnxruntime as ort
 
-from metric_learning import MetricLearning
+from double_metric_learning import DoubleMetricLearning
 from interaction_gnn import (
     RecurrentInteractionGNN2,
     ChainedInteractionGNN2,
@@ -79,7 +79,7 @@ class MetricLearningInferenceConfig:
     compling: bool
     debug: bool
     save_debug_data: bool = False
-    r_max: float = 0.12
+    r_max: float = 0.14
     k_max: int = 1000
     filter_cut: float = 0.05
     filter_batches: int = 10
@@ -133,7 +133,12 @@ class MetricLearningInference:
 
         print(f"Loading checkpoint from {embedding_path}")
         checkpoint = torch.load(embedding_path, map_location="cpu")
-        self.embedding_model = MetricLearning(checkpoint["hyper_parameters"])
+        self.embedding_model = DoubleMetricLearning(checkpoint["hyper_parameters"])
+        # print("JAYYYY", checkpoint["state_dict"].keys())
+        keys = list(checkpoint["state_dict"].keys())
+        for key in keys:
+            if "src_network" in key or "tgt_network" in key:
+                checkpoint["state_dict"].pop(key)
         self.embedding_model.load_state_dict(checkpoint["state_dict"])
         self.embedding_model.to(self.config.device).eval()
 
@@ -258,7 +263,7 @@ class MetricLearningInference:
 
         # torch.cuda.synchronize()
         # t0 = time.time()
-        embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
+        src_embedding, tgt_embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
@@ -266,14 +271,14 @@ class MetricLearningInference:
         # print(f"run_torch_model (embedding) time: {time.time() - t0:.4f} s")
 
         if debug:
-            print(f"after embedding, shape = {embedding.shape}")
-            print("embedding data", embedding[0])
-            print("embedding data type", embedding.dtype)
+            print(f"after embedding, shape = {src_embedding.shape}, {tgt_embedding.shape}")
+            print("embedding data", src_embedding[0], tgt_embedding[0])
+            print("embedding data type", src_embedding.dtype, tgt_embedding.dtype)
 
         out_data = Data()
         if save_debug_data:
             out_data = Data(
-                embedding_inputs=embedding_inputs, embedding=embedding, node_features=node_features
+                embedding_inputs=embedding_inputs, src_embedding=src_embedding, tgt_embedding=tgt_embedding, node_features=node_features
             )
 
         # delete the embedding inputs if not needed.
@@ -294,9 +299,8 @@ class MetricLearningInference:
             nvtx.range_push("Build Edges")
         # torch.cuda.synchronize()
         # t0 = time.time()
-        # self.config.k_max  = 1024
         edge_index = build_edges(
-            embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
+            src_embedding, tgt_embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
         torch.cuda.synchronize()
         if nvtx_enabled:
@@ -525,7 +529,7 @@ def create_metric_learning_end2end_rel24(
         compling=compiling,
         debug=debug,
         save_debug_data=save_data_for_debug,
-        r_max=0.12,
+        r_max=0.14,
         k_max=1000,
         filter_cut=0.05,
         filter_batches=10,
