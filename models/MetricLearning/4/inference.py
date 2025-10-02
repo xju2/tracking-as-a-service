@@ -17,7 +17,7 @@ from interaction_gnn import (
 from metric_learning import MetricLearning
 from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
-from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
+from torch_model_inference import run_gnn_filter_optimized, run_torch_model
 
 
 torch.manual_seed(42)
