@@ -168,4 +168,3 @@ jobs/
 *.sqlite
 *.qdstrm
 *.ipynb_checkpoints
-*.pt
