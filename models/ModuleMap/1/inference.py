@@ -87,9 +87,8 @@ class ModuleMapInference:
             if not isinstance(self.config.model_path, Path)
             else self.config.model_path
         )
-        self.config.module_map_pattern_path = "/pscratch/sd/a/alazar/tracking-as-a-service/models/ModuleMap/1/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
         print("Path: ", self.config.module_map_pattern_path)
-        mmg.init_graph_builder(self.config.module_map_pattern_path)
+        mmg.init_graph_builder(str(self.config.module_map_pattern_path))
         gnn_path = model_path / "MM_minmax_gnn.ckpt"
 
         # load the checkpoint
@@ -382,12 +381,6 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    if not Path(args.model).exists():
-        raise FileNotFoundError(f"Model path {args.model} does not exist.")
-    if not Path(args.module_map_pattern_path).exists():
-        raise FileNotFoundError(
-            f"Module map pattern path {args.module_map_pattern_path} does not exist."
-        )
 
     inference = create_module_map_end2end_rel24(
         model_path=args.model,
@@ -404,18 +397,16 @@ if __name__ == "__main__":
     track_ids = inference(node_features, nvtx_enabled=False)
 
     # time the inference function.
-    if True:  # args.timing:
+    if args.timing:
         import time
-
         from tqdm import tqdm
 
         start_time = time.time()
         num_trials = 10
         print(">>> Starting NSYS-captured inference")
         nvtx.range_push("Inference_Loop")
-        for _ in range(num_trials):  # tqdm(range(num_trials)):
+        for _ in tqdm(range(num_trials)):
             track_ids = inference(node_features, nvtx_enabled=True)
-            # print("time for one inference:", timed(lambda: inference(node_features))[1])
         nvtx.range_pop()
-        # print("average time per event", (time.time() - start_time) / num_trials)
+        print("average time per event", (time.time() - start_time) / num_trials)
     print("total tracks", np.sum(track_ids == -1))
