@@ -53,12 +53,20 @@ class TritonPythonModel:
         model_path = Path(args["model_repository"]) / args["model_version"]
         device = "cuda" if torch.cuda.is_available() else "cpu"
         auto_cast = get_parameter("auto_cast").lower() == "true"
+<<<<<<< HEAD
         compling = get_parameter("compling").lower() == "true"
+=======
+        compiling = get_parameter("compiling").lower() == "true"
+>>>>>>> origin/main
         config = MetricLearningInferenceConfig(
             model_path=model_path,
             device=device,
             auto_cast=auto_cast,
+<<<<<<< HEAD
             compling=compling,
+=======
+            compiling=compiling,
+>>>>>>> origin/main
             debug=self.debug,
             save_debug_data=self.save_event,
         )
