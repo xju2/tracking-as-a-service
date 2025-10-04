@@ -87,10 +87,10 @@ class ModuleMapInference:
             if not isinstance(self.config.model_path, Path)
             else self.config.model_path
         )
-        self.config.module_map_pattern_path = "/pscratch/sd/a/alazar/tracking-as-a-service/models/ModuleMap/1/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
+        self.config.module_map_pattern_path = "models/ModuleMap/1/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
         print("Path: ", self.config.module_map_pattern_path)
         mmg.init_graph_builder(self.config.module_map_pattern_path)
-        gnn_path = model_path / "MM_minmax_gnn.ckpt"
+        gnn_path = model_path / "MM_minmax_ignn2.ckpt"
 
         # load the checkpoint
 
