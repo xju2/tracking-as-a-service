@@ -226,11 +226,7 @@ def process_sorted_nodes(sorted_hit_ids, numba_edges, allow_node_reuse):
         complete_paths = find_paths(hit_id, numba_edges, used_nodes, allow_node_reuse)
 
         if complete_paths:
-<<<<<<< HEAD
-            longest_path = find_longest_path(complete_paths)
-=======
             longest_path = complete_paths[0]
->>>>>>> origin/main
             if len(longest_path) > 1:
                 tracks.append(longest_path)
                 for node in longest_path:
@@ -248,25 +244,6 @@ def get_tracks(numba_edges, sorted_hit_ids, allow_node_reuse):
 @njit
 def find_paths(start_node, edges, used_nodes, allow_node_reuse):
     paths = List()
-<<<<<<< HEAD
-    paths.append([start_node])
-    complete_paths = List()
-
-    while len(paths) > 0:
-        path = paths.pop(0)
-        current_node = path[-1]
-
-        if current_node not in edges:
-            complete_paths.append(path)
-            continue
-
-        for neighbor in edges[current_node]:
-            if not allow_node_reuse and neighbor in used_nodes:
-                continue
-            new_path = path.copy()
-            new_path.append(neighbor)
-            paths.append(new_path)
-=======
     paths.append(List([start_node]))
     complete_paths = List()
 
@@ -291,7 +268,6 @@ def find_paths(start_node, edges, used_nodes, allow_node_reuse):
             if num_branches == 0:
                 complete_paths.append(path)
                 continue
->>>>>>> origin/main
 
     return complete_paths
 
