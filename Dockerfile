@@ -1,32 +1,9 @@
 # syntax=docker/dockerfile:experimental
 
-# ------------------------
-# Build stage: boost-builder
-# Compile Boost 1.87 and install to /usr/local
-# ------------------------
-FROM ubuntu:20.04 AS boost-builder
-ARG BOOST_VERSION_DOTTED=1.87.0
-ARG DEBIAN_FRONTEND=noninteractive
-ENV TZ=Etc/UTC
-RUN set -eux; \
-  echo "tzdata tzdata/Areas select Etc" | debconf-set-selections; \
-  echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections; \
-  apt-get update && apt-get install -y --no-install-recommends \
-    git build-essential autotools-dev automake libtool python3-dev ca-certificates curl libboost-regex-dev && \
-  git clone --depth 1 --branch boost-${BOOST_VERSION_DOTTED} https://github.com/boostorg/boost.git /tmp/boost; \
-  cd /tmp/boost; \
-  git submodule update --init --recursive; \
-  # Include graph library so CMake find_package(boost_graph) succeeds for PyModuleMapGraph
-  ./bootstrap.sh --with-libraries=program_options,serialization,regex,filesystem,test,graph; \
-  ./b2 -j2 link=shared cxxflags="-fPIC" variant=release install; \
-  rm -rf /tmp/boost; \
-  apt-get remove -y --purge git build-essential autotools-dev automake libtool python3-dev && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*;
-
 FROM nvcr.io/nvidia/tritonserver:24.05-py3
-ARG DEBIAN_FRONTEND=noninteractive
-ENV TZ=Etc/UTC
 # nvcc version: 12.4 ## nvcc --version
 # cudnn version: 9.1.0  ## find / -name "libcudnn*" 2>/dev/null
+# https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tritonserver
 
 LABEL description="Triton Server backend with other dependencies for Tracking-as-a-Service"
 LABEL version="1.0"
@@ -35,56 +12,46 @@ LABEL version="1.0"
 # Update the CUDA Linux GPG Repository Key
 RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub
 
-#-------------------------------------------------------------------
-# Install ROOT and its dependencies
-#-------------------------------------------------------------------
+# See also https://root.cern.ch/build-prerequisites
+# https://root.cern/install/dependencies/#ubuntu-and-other-debian-based-distributions
+RUN apt-get update -y && apt-get install -y \
+    build-essential curl git freeglut3-dev libfreetype6-dev libpcre3-dev \
+    libtbb-dev ninja-build time tree \
+    python3 python3-dev python3-pip python3-numpy \
+    rsync zlib1g-dev ccache vim unzip libblas-dev liblapack-dev swig rapidjson-dev \
+    libexpat-dev libeigen3-dev libftgl-dev libgl2ps-dev libglew-dev libgsl-dev \
+    liblz4-dev liblzma-dev libx11-dev libxext-dev libxft-dev libxpm-dev libxerces-c-dev \
+    libzstd-dev libb64-dev graphviz gfortran  libglu1-mesa-dev  \
+    libfftw3-dev libcfitsio-dev libgraphviz-dev \
+    libavahi-compat-libdnssd-dev libldap2-dev libxml2-dev libkrb5-dev \
+     qtwebengine5-dev nlohmann-json3-dev libmysqlclient-dev libxxhash-dev \
+  && apt-get clean -y && rm -rf /var/lib/apt/lists/*
+
+RUN ln -s /usr/bin/python3 /usr/bin/python
+RUN pip3 install --upgrade pip
+
+# install BOOST
+# http://www.boost.org/build/
+ARG BOOST_VERSION_DOTTED=1.87.0
+RUN cd /tmp && git clone --depth 1 --branch boost-${BOOST_VERSION_DOTTED} https://github.com/boostorg/boost.git /tmp/boost && \
+  cd /tmp/boost && \
+  git submodule update --init --recursive && \
+  ./bootstrap.sh --with-python=/usr/bin/python3 && \
+  ./b2 -j16 link=shared threading=multi runtime-link=shared cxxflags="-fPIC" variant=release install && \
+  rm -rf /tmp/boost
+
+# Manual builds for specific packages
+# Install CMake v3.29.4
+ARG CMAKE_VERSION=3.29.4
+RUN cd /tmp && mkdir -p src \
+  && ${GET} https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-Linux-x86_64.tar.gz \
+    | ${UNPACK_TO_SRC} \
+  && rsync -ru src/ ${PREFIX} \
+  && cd /tmp && rm -rf /tmp/src
+
+# install ROOT
 ARG ROOT_VERSION=6.32.02
 ENV ROOTSYS=/usr/local/root
-
-# 1. Install all prerequisites for ROOT in a single layer
-RUN apt-get update -y && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    curl \
-    g++ \
-    gcc \
-    git \
-    graphviz-dev \
-    libb64-dev \
-    libblas-dev \
-    libboost-dev \
-    libcurl4-openssl-dev \
-    libeigen3-dev \
-    libexpat-dev \
-    libftgl-dev \
-    libglew-dev \
-    libgsl-dev \
-    libkrb5-dev \
-    liblapack-dev \
-    liblz4-dev \
-    liblzma-dev \
-    libpcre3-dev \
-    libssl-dev \
-    libtbb-dev \
-    libx11-dev \
-    libxext-dev \
-    libxft-dev \
-    libxml2-dev \
-    libxpm-dev \
-    libzstd-dev \
-    make \
-    ninja-build \
-    lld \
-    python3-dev \
-    rapidjson-dev \
-    swig \
-    wget \
-    zlib1g-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# 2. Download, build, and install ROOT, then clean up in a single layer
 RUN cd /tmp && \
     wget https://root.cern/download/root_v${ROOT_VERSION}.source.tar.gz && \
     tar -xzvf root_v${ROOT_VERSION}.source.tar.gz && \
@@ -98,59 +65,10 @@ RUN cd /tmp && \
       -DLLVM_PARALLEL_LINK_JOBS=1 \
       -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
       -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" \
-      -Dpyroot=OFF -Droofit=OFF -Dtmva=OFF \
+      -Dpyroot=OFF -Droofit=OFF -Dtmva=OFF -Dgnuinstall=OFF -Dminuit=OFF \
       -Drpath=ON && \
-    cmake --build . --target install -j$(nproc) --parallel 1 && \
-    cd / && \
-    rm -rf /tmp/root_v${ROOT_VERSION}.source.tar.gz /tmp/root-${ROOT_VERSION} /tmp/root_build
-
-# 3. Set up the environment for ROOT
-ENV PATH=${ROOTSYS}/bin:$PATH
-ENV LD_LIBRARY_PATH=${ROOTSYS}/lib:$LD_LIBRARY_PATH
-ENV PYTHONPATH=${ROOTSYS}/lib:$PYTHONPATH
-
-# For interactive sessions, source thisroot.sh
-RUN echo "source ${ROOTSYS}/bin/thisroot.sh" >> /etc/bash.bashrc
-
-#-------------------------------------------------------------------
-# End of ROOT Installation
-#-------------------------------------------------------------------
-
-
-RUN set -eux; \
-  echo "tzdata tzdata/Areas select Etc" | debconf-set-selections; \
-  echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections; \
-  apt-get update -y && apt-get install -y \
-    build-essential curl git freeglut3-dev libfreetype6-dev libpcre3-dev\
-    libboost-dev libboost-filesystem-dev libboost-program-options-dev libboost-test-dev \
-    libtbb-dev ninja-build time tree \
-    python3 python3-dev python3-pip python3-numpy \
-    rsync zlib1g-dev ccache vim unzip libblas-dev liblapack-dev swig \
-    rapidjson-dev \
-    libexpat-dev libeigen3-dev libftgl-dev libgl2ps-dev libglew-dev libgsl-dev \
-    liblz4-dev liblzma-dev libx11-dev libxext-dev libxft-dev libxpm-dev libxerces-c-dev \
-    libzstd-dev ccache libb64-dev graphviz graphviz-dev \
-  && apt-get clean -y && rm -rf /var/lib/apt/lists/*
-
-ARG BOOST_VERSION=1_87_0
-ENV BOOST_VERSION_DOTTED=1.87.0
-## First try to install distro-provided Boost 1.87 runtime packages (if available).
-## If apt doesn't have them, fall back to the compiled libraries copied from boost-builder.
-RUN set -eux; \
-  apt-get update -y || true; \
-  apt-get install -y --no-install-recommends libboost-program-options1.87.0 libboost-serialization1.87.0 libboost-regex1.87.0 libboost-graph1.87.0 || \
-      echo "libboost 1.87 packages not available; will use built Boost from builder stage";
-
-# Copy Boost install from build stage (fallback for distros without 1.87 packages)
-COPY --from=boost-builder /usr/local /usr/local
-# Ensure ldconfig picks up the new libs
-RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/usr_local_lib.conf && ldconfig
-
-RUN ln -s /usr/bin/python3 /usr/bin/python
-RUN pip3 install --upgrade pip
-RUN pip3 install -U pandas matplotlib seaborn git+https://github.com/LAL/trackml-library.git \
-pyyaml click pytest pytest-cov class-resolver scipy pandas matplotlib uproot tqdm \
-ipykernel atlasify networkx seaborn wandb pygraphviz tritonclient[all]
+    cmake --build . --target install -- -j16 && \
+    cd / && rm -rf /tmp/root_v${ROOT_VERSION}.source.tar.gz /tmp/root-${ROOT_VERSION} /tmp/root_build
 
 # Environment variables
 ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib:/usr/local/lib"
@@ -160,46 +78,25 @@ ENV PREFIX="/usr/local"
 ENV TORCH_CUDA_ARCH_LIST="80"
 ENV PYTHONNOUSERSITE=True
 
-# Manual builds for specific packages
-# Install CMake v3.29.4
-RUN cd /tmp && mkdir -p src \
-  && ${GET} https://github.com/Kitware/CMake/releases/download/v3.29.4/cmake-3.29.4-Linux-x86_64.tar.gz \
-    | ${UNPACK_TO_SRC} \
-  && rsync -ru src/ ${PREFIX} \
-  && cd /tmp && rm -rf /tmp/src
-
-# Install xxHash v0.7.3
-RUN cd /tmp && mkdir -p src \
-  && ${GET} https://github.com/Cyan4973/xxHash/archive/v0.8.2.tar.gz \
-    | ${UNPACK_TO_SRC} \
-  && cmake -B build -S src/cmake_unofficial -GNinja\
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=${PREFIX} \
-  && cmake --build build -- install -j20\
-  && cd /tmp && rm -rf src build
-
-RUN pip3 install pyyaml astunparse expecttest!=0.2.0 hypothesis numpy psutil pyyaml requests setuptools types-dataclasses \
-    typing-extensions>=4.8.0 sympy filelock networkx jinja2 fsspec lintrunner ninja packaging optree>=0.11.0 setuptools
-
-RUN apt-get update -y && apt-get install -y gfortran && apt-get clean -y
-# install magma
-RUN cd /tmp && mkdir -p src \
-  && ${GET} https://icl.utk.edu/projectsfiles/magma/downloads/magma-2.8.0.tar.gz \
-    | ${UNPACK_TO_SRC} \
-  && cmake -B build -S src -DGPU_TARGET="Ampere" -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_BUILD_TYPE=Release \
-  && cmake --build build -- install -j20 \
-  && cd /tmp && rm -rf src
+RUN pip3 install pyyaml astunparse expecttest!=0.2.0 hypothesis numpy psutil requests types-dataclasses \
+    typing-extensions>=4.8.0 sympy filelock jinja2 fsspec lintrunner ninja packaging optree>=0.11.0 setuptools \
+    git+https://github.com/LAL/trackml-library.git \
+    click pytest pytest-cov class-resolver scipy pandas matplotlib uproot tqdm \
+    ipykernel atlasify networkx seaborn wandb pygraphviz tritonclient[all]
 
 # Get pytorch source and build so that it runs on different GPUs.
-ENV TORCH_CUDA_ARCH_LIST="8.0"
-# RUN cd /tmp && \
-# 	git clone --recursive https://github.com/pytorch/pytorch.git && cd pytorch && \
-# 	git checkout -b r2.3 origin/release/2.3 && \
-# 	git submodule sync && git submodule update --init --recursive --jobs 0 && \
-# 	MAX_JOBS=20 USE_CUDA=1 BUILD_TEST=0 USE_FBGEMM=0 USE_QNNPACK=0 USE_DISTRIBUTED=1 BUILD_CAFFE2=0 DEBUG=0 \
-# 	  CMAKE_PREFIX_PATH=${PREFIX} python setup.py install && \
-# 	rm -rf /tmp/pytorch
-RUN pip3 install torch --index-url https://download.pytorch.org/whl/cu124
+RUN pip3 install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+RUN pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
+
+RUN pip3 install torch_geometric lightning>=2.2
+
+# Onnx (download of tar.gz does not work out of the box, since the build.sh script requires a git repository)
+RUN pip3 install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
+
+# Rapids AI
+# cudf-cu12 dask-cudf-cu12 cuml-cu12 cugraph-cu12 cuspatial-cu12 cuproj-cu12 cuxfilter-cu12 cucim
+RUN pip3 install --extra-index-url=https://pypi.nvidia.com cudf-cu12 cugraph-cu12 nx-cugraph-cu12 cugraph-pyg-cu12
+# RUN pip install pymodulemapgraph --index-url https://gitlab.cern.ch/api/v4/projects/210408/packages/pypi/simple
 
 # FRNN
 RUN cd /tmp/ \
@@ -213,36 +110,4 @@ RUN cd /tmp/ \
 		python setup.py install && \
 	rm -rf /tmp/prefix_sum && rm -rf /tmp/FRNN
 
-# torchscatter
-# RUN cd /tmp/ && mkdir src \
-# 	&& ${GET} https://github.com/rusty1s/pytorch_scatter/archive/refs/tags/2.1.2.tar.gz | ${UNPACK_TO_SRC} \
-# 	&& cd src && FORCE_CUDA=1 pip3 install torch-scatter && rm -rf /tmp/src
-
-# # torch sparse
-# RUN cd /tmp/ && mkdir src \
-# 	&& ${GET} https://github.com/rusty1s/pytorch_sparse/archive/refs/tags/0.6.18.tar.gz | ${UNPACK_TO_SRC} \
-# 	&& cd src && FORCE_CUDA=1 pip3 install torch-sparse && rm -rf /tmp/src
-
-# # torch cluster
-# RUN cd /tmp/ && mkdir src \
-# 	&& ${GET} https://github.com/rusty1s/pytorch_cluster/archive/refs/tags/1.6.3.tar.gz | ${UNPACK_TO_SRC} \
-# 	&& cd src && FORCE_CUDA=1 pip3 install torch-cluster && rm -rf /tmp/src
-
-RUN pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.6.0+cu124.html
-
-RUN pip3 install torch_geometric lightning>=2.2
-
-# Onnx (download of tar.gz does not work out of the box, since the build.sh script requires a git repository)
-RUN pip3 install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
-
-# Rapids AI
-# cudf-cu12 dask-cudf-cu12 cuml-cu12 cugraph-cu12 cuspatial-cu12 cuproj-cu12 cuxfilter-cu12 cucim
-RUN pip3 install --extra-index-url=https://pypi.nvidia.com cudf-cu12 cugraph-cu12 nx-cugraph-cu12 cugraph-pyg-cu12
-# RUN pip install pymodulemapgraph --index-url https://gitlab.cern.ch/api/v4/projects/210408/packages/pypi/simple
-
-RUN git clone https://gitlab.cern.ch/gnn4itkteam/PyModuleMapGraph.git \
-  && cd PyModuleMapGraph \
-  && pip3 install .
-
-ENTRYPOINT []
-CMD ["/bin/bash"]
+RUN pip install graph_segment

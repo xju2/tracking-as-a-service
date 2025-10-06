@@ -12,12 +12,10 @@ from torch_geometric.transforms import RemoveIsolatedNodes
 from torch_geometric.utils import to_networkx
 import torch.cuda.nvtx as nvtx
 
-import pymmg.mmg_wrapper as mmg
-from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
+from pymmg import GraphBuilder
+from torch_model_inference import run_torch_model
 import fastwalkthrough as walkutils
 import time
-import yaml
-import onnxruntime as ort
 
 
 from interaction_gnn import (
@@ -38,6 +36,7 @@ class ModuleMapInferenceConfig:
     auto_cast: bool
     compiling: bool
     debug: bool
+    device_id: int = 0
     save_debug_data: bool = False
     r_max: float = 0.12
     k_max: int = 1000
@@ -82,18 +81,17 @@ class ModuleMapInference:
     def __init__(self, config: ModuleMapInferenceConfig):
         self.config = config
         print(self.config)
-        model_path = (
-            Path(self.config.model_path)
-            if not isinstance(self.config.model_path, Path)
-            else self.config.model_path
-        )
-        self.config.module_map_pattern_path = "/pscratch/sd/a/alazar/tracking-as-a-service/models/ModuleMap/1/ModuleMap_rel24_ttbar_v9_89809evts_tol1e-10"
+        self.device = self.config.device
+
         print("Path: ", self.config.module_map_pattern_path)
-        mmg.init_graph_builder(self.config.module_map_pattern_path)
-        gnn_path = model_path / "MM_minmax_gnn.ckpt"
+        self.graph_builder = GraphBuilder(
+            module_map_path=str(self.config.module_map_pattern_path),
+            device=self.config.device_id,
+        )
+
+        gnn_path = "./MM_minmax_ignn2.ckpt"
 
         # load the checkpoint
-
         print(f"Loading checkpoint from {gnn_path}")
         checkpoint = torch.load(gnn_path, map_location="cpu")
         model_config = checkpoint["hyper_parameters"]
@@ -112,22 +110,9 @@ class ModuleMapInference:
         new_gnn.load_state_dict(state_dict)
 
         self.gnn_model = new_gnn
-        self.gnn_model.to(self.config.device).eval()
+        self.gnn_model.to(self.device).eval()
 
         if self.config.compiling:
-            print("compiling models works now...")
-            torch.set_float32_matmul_precision("high")
-            # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
-            self.embedding_model = torch.compile(
-                self.embedding_model, dynamic=True, mode="max-autotune"
-            )
-            # # Compile GNNFilter
-            self.filter_model.gnn = torch.compile(
-                self.filter_model.gnn, dynamic=True, mode="max-autotune"
-            )
-            self.filter_model.net = torch.compile(
-                self.filter_model.net, dynamic=True, mode="max-autotune"
-            )
             # # Compile interaction gnn
             self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
 
@@ -176,21 +161,18 @@ class ModuleMapInference:
         if nvtx_enabled:
             nvtx.range_push("Build Edges")
 
-        event_id_np = "000001150"
-
-        edge_index = mmg.build_edge_index(
-            event_id_np,
-            hit_id.cpu(),
-            node_features[:, self.input_node_features.index("module_id")].cpu(),
-            node_features[:, self.input_node_features.index("x")].cpu(),
-            node_features[:, self.input_node_features.index("y")].cpu(),
-            node_features[:, self.input_node_features.index("z")].cpu(),
-            hit_id.shape[0],
+        edge_index = self.graph_builder.build_edge_index(
+            hit_id=hit_id,
+            hit_module_id=node_features[:, self.input_node_features.index("module_id")],
+            hit_x=node_features[:, self.input_node_features.index("x")],
+            hit_y=node_features[:, self.input_node_features.index("y")],
+            hit_z=node_features[:, self.input_node_features.index("z")],
+            nb_hits=hit_id.shape[0],
         )
 
         if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
-        edge_index = edge_index.to(device)
+        # edge_index = edge_index.to(device)
 
         # # order the edges by their distance from the collision point.
         R = (
@@ -328,6 +310,7 @@ def create_module_map_end2end_rel24(
     model_path: str,
     module_map_pattern_path: str,
     device: str,
+    device_id: int,
     debug: bool,
     precision: str,
     auto_cast: bool,
@@ -338,6 +321,7 @@ def create_module_map_end2end_rel24(
         model_path=model_path,
         module_map_pattern_path=module_map_pattern_path,
         device=device,
+        device_id=device_id,
         auto_cast=auto_cast,
         compiling=compiling,
         debug=debug,
@@ -382,17 +366,12 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    if not Path(args.model).exists():
-        raise FileNotFoundError(f"Model path {args.model} does not exist.")
-    if not Path(args.module_map_pattern_path).exists():
-        raise FileNotFoundError(
-            f"Module map pattern path {args.module_map_pattern_path} does not exist."
-        )
 
     inference = create_module_map_end2end_rel24(
         model_path=args.model,
         module_map_pattern_path=args.module_map_pattern_path,
         device=args.device,
+        device_id=0,
         debug=args.verbose,
         precision=args.precision,
         auto_cast=args.auto_cast,
@@ -404,18 +383,16 @@ if __name__ == "__main__":
     track_ids = inference(node_features, nvtx_enabled=False)
 
     # time the inference function.
-    if True:  # args.timing:
+    if args.timing:
         import time
-
         from tqdm import tqdm
 
         start_time = time.time()
         num_trials = 10
         print(">>> Starting NSYS-captured inference")
         nvtx.range_push("Inference_Loop")
-        for _ in range(num_trials):  # tqdm(range(num_trials)):
+        for _ in tqdm(range(num_trials)):
             track_ids = inference(node_features, nvtx_enabled=True)
-            # print("time for one inference:", timed(lambda: inference(node_features))[1])
         nvtx.range_pop()
-        # print("average time per event", (time.time() - start_time) / num_trials)
+        print("average time per event", (time.time() - start_time) / num_trials)
     print("total tracks", np.sum(track_ids == -1))
