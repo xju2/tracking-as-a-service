@@ -1,0 +1,84 @@
+name: "BTagging_GN3V00_antikt4empflow"
+platform: "onnxruntime_onnx"
+max_batch_size: 0
+input: [
+  {
+  name: "jet_features"
+  data_type: TYPE_FP32
+  dims: [ 1, 2 ]
+},
+  {
+  name: "track_features"
+  data_type: TYPE_FP32
+  dims: [ -1, 19 ]
+}
+]
+output: [
+{
+  name: "GN3V00_pb"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_pc"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_ps"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_pud"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_pg"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_ptau"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_ptFromTruthDressedWZJet"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_pu"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_pquark"
+  data_type: TYPE_FP32
+  dims: [ 1 ]
+},
+{
+  name: "GN3V00_TrackOrigin"
+  data_type: TYPE_INT8
+  dims: [ -1 ]
+},
+{
+  name: "GN3V00_VertexIndex"
+  data_type: TYPE_INT8
+  dims: [ -1 ]
+},
+{
+  name: "GN3V00_TrackType"
+  data_type: TYPE_INT8
+  dims: [ -1 ]
+}
+]
+instance_group: [
+  {
+  count: 1
+  kind: KIND_GPU
+
+}
+]
