@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from operator import itemgetter
 
@@ -268,16 +269,21 @@ class MetricLearningInference:
         ]
         embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
 
-        # torch.cuda.synchronize()
-        # t0 = time.time()
+        # Time the embedding, filtering and GNN calls. Use cuda sync
+        # around each measured region for accurate timing on GPU.
+        total_t0 = time.perf_counter()
+
+        torch.cuda.synchronize()
+        embed_t0 = time.perf_counter()
         src_embedding, tgt_embedding = run_torch_model(
             self.embedding_model, self.config.auto_cast, embedding_inputs
         )
         torch.cuda.synchronize()
+        embed_t1 = time.perf_counter()
+        embed_time = embed_t1 - embed_t0
+
         if nvtx_enabled:
             nvtx.range_pop()
-        # torch.cuda.synchronize()
-        # print(f"run_torch_model (embedding) time: {time.time() - t0:.4f} s")
 
         if debug:
             print(f"after embedding, shape = {src_embedding.shape}, {tgt_embedding.shape}")
@@ -309,13 +315,16 @@ class MetricLearningInference:
         # Build edges
         if nvtx_enabled:
             nvtx.range_push("Build Edges")
-        # torch.cuda.synchronize()
-        # t0 = time.time()
+        # Time the build_edges call for GPU-accurate timing
+        torch.cuda.synchronize()
+        edges_t0 = time.perf_counter()
         # self.config.k_max  = 1024
         edge_index = build_edges(
             src_embedding, tgt_embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
         torch.cuda.synchronize()
+        edges_t1 = time.perf_counter()
+        edge_time = edges_t1 - edges_t0
         if nvtx_enabled:
             nvtx.range_pop()
 
@@ -347,8 +356,9 @@ class MetricLearningInference:
         # GNNFiltering
         if nvtx_enabled:
             nvtx.range_push("GNN Filtering")
-        # torch.cuda.synchronize()
-        # t0 = time.time()
+        # Time the filter step
+        torch.cuda.synchronize()
+        filter_t0 = time.perf_counter()
         edge_scores, edge_index, _ = run_gnn_filter_optimized(
             self.filter_model,
             self.config.auto_cast,
@@ -357,6 +367,8 @@ class MetricLearningInference:
             edge_index,
         )
         torch.cuda.synchronize()
+        filter_t1 = time.perf_counter()
+        filter_time = filter_t1 - filter_t0
         if nvtx_enabled:
             nvtx.range_pop()
         # torch.cuda.synchronize()
@@ -436,6 +448,9 @@ class MetricLearningInference:
         # t0 = time.time()
         if nvtx_enabled:
             nvtx.range_push("GNN Inference")
+        # Time the GNN inference
+        torch.cuda.synchronize()
+        gnn_t0 = time.perf_counter()
         edge_scores = (
             run_torch_model(
                 self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
@@ -443,6 +458,11 @@ class MetricLearningInference:
             .sigmoid()
             .to(torch.float32)
         )
+        torch.cuda.synchronize()
+        gnn_t1 = time.perf_counter()
+        gnn_time = gnn_t1 - gnn_t0
+        total_t1 = time.perf_counter()
+        total_time = total_t1 - total_t0
         torch.cuda.synchronize()
         if nvtx_enabled:
             nvtx.range_pop()
@@ -462,6 +482,17 @@ class MetricLearningInference:
             out_data.gnn_edge_lists = edge_index
             out_data.gnn_edge_features = edge_features
             out_data.gnn_node_features = gnn_input
+
+        # try:
+        #     # Append timing for this event (header created at model initialize)
+        #     with open(timing_path, "a") as tf:
+        #         tf.write(
+        #             f"{int(time.time())},{embed_time:.6f},{edge_time:.6f},{filter_time:.6f},{gnn_time:.6f},{total_time:.6f}\n"
+        #         )
+        # except Exception as e:
+        #     if debug:
+        #         print("Failed to write timing file:", e)
+        print(f"{int(time.time())},{embed_time:.6f},{edge_time:.6f},{filter_time:.6f},{gnn_time:.6f},{total_time:.6f}")
 
         good_edge_mask = edge_scores > self.config.cc_cut
         edge_index = edge_index[:, good_edge_mask]

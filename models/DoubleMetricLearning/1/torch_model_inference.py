@@ -86,8 +86,10 @@ def run_gnn_filter_optimized(
         with torch.autocast(
             device_type, dtype=dtype, enabled=auto_cast and check_autocast_support(device_type)
         ):
-            # GNN embeddings are calculated only once
-            gnn_embedding = model.gnn(x, sorted_edge_index)
+            # GNN embeddings are calculated only once. Clone immediately to
+            # avoid returning views that can be overwritten when using
+            # CUDA graphs / torch.compile.
+            gnn_embedding = model.gnn(x, sorted_edge_index).clone()
 
             # Process edges in batches to control memory
             for i in range(0, num_edges, batches):
@@ -102,7 +104,7 @@ def run_gnn_filter_optimized(
                 edge_features = torch.cat([source_nodes, target_nodes], dim=-1)
 
                 # 4. Run the filter network on the batch
-                scores_batch = model.net(edge_features).squeeze(-1)
+                scores_batch = model.net(edge_features).squeeze(-1).clone()
                 filter_scores.append(scores_batch)
 
                 # Explicitly free memory (optional, but can help in tight situations)

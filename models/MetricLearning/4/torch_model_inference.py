@@ -4,26 +4,35 @@ from torch_geometric.utils import sort_edge_index
 dtype = torch.float16
 
 
-def check_autocast_support(device_type: str):
-    if torch.__version__ < "2.4.0":
-        return device_type == "cuda"
-    return torch.amp.autocast_mode.is_autocast_available(device_type)
+def _as_half(x):
+    if isinstance(x, torch.Tensor):
+        # Only convert floating-point tensors to half precision.
+        # Leave integer/boolean/index tensors unchanged so they remain valid indices.
+        try:
+            return x.half() if x.is_floating_point() else x
+        except Exception:
+            return x
+    if isinstance(x, (list, tuple)):
+        return type(x)(_as_half(v) for v in x)
+    return x
 
+def _module_half(module: torch.nn.Module):
+    try:
+        module.half()
+    except Exception:
+        # best-effort; if module can't be halfed, ignore
+        pass
 
 def run_torch_model(model: torch.nn.Module, auto_cast: bool, *inputs):
     assert len(inputs) > 0, "At least one input must be provided."
     with torch.inference_mode():
-        # device = next(model.parameters()).device
-        device_type = "cuda:0" #device.type if hasattr(device, 'type') else str(device)
-        if auto_cast and check_autocast_support(device_type):
-            with torch.autocast(device_type, dtype=dtype):
-                output = model(*inputs).clone() # .to(torch.float32)
-                # print("compiled amp:", timed(lambda: model(*inputs))[1])
+        if auto_cast:
+            # convert model and inputs to half precision (in-place)
+            half_inputs = tuple(_as_half(x) for x in inputs)
+            output = model(*half_inputs)
         else:
-            output = model(*inputs).clone()
-            # print("compiled:", timed(lambda: model(*inputs))[1])
+            output = model(*inputs)
     return output
-
 
 def run_gnn_filter(
     model: torch.nn.Module,
@@ -54,8 +63,7 @@ def run_gnn_filter(
                 for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
             ]
     filter_scores = torch.cat(filter_scores).sigmoid()
-    return filter_scores, sorted_edge_index, gnn_embedding
-
+    return filter_scores, sorted_edge_index.clone().long(), gnn_embedding.clone()
 
 import torch
 
@@ -75,33 +83,34 @@ def run_gnn_filter_optimized(
         sorted_edge_index = sort_edge_index(edge_index, sort_by_row=False)
         device_type = x.device.type if hasattr(x, 'device') else str(x.device)
         num_edges = sorted_edge_index.shape[1]
+       # If requested, convert model components and inputs to half precision
+        if auto_cast:
+            gnn_embedding = model.gnn(x.half(), sorted_edge_index).clone()
+        else:
+            gnn_embedding = model.gnn(x, sorted_edge_index).clone()
 
+        # Process edges in batches to control memory
         filter_scores = []
+        for i in range(0, num_edges, batches):
+            # 1. Get the current batch of edges
+            edge_batch = sorted_edge_index[:, i : i + batches]
 
-        with torch.autocast(device_type, dtype=dtype, enabled=auto_cast and check_autocast_support(device_type)):
-            # GNN embeddings are calculated only once
-            gnn_embedding = model.gnn(x, sorted_edge_index)
+            # 2. Gather embeddings for the current batch
+            source_nodes = gnn_embedding[edge_batch[0]]
+            target_nodes = gnn_embedding[edge_batch[1]]
 
-            # Process edges in batches to control memory
-            for i in range(0, num_edges, batches):
-                # 1. Get the current batch of edges
-                edge_batch = sorted_edge_index[:, i:i + batches]
+            # 3. Concatenate features for the batch (this tensor is now much smaller)
+            edge_features = torch.cat([source_nodes, target_nodes], dim=-1)
 
-                # 2. Gather embeddings for the current batch
-                source_nodes = gnn_embedding[edge_batch[0]]
-                target_nodes = gnn_embedding[edge_batch[1]]
+            # 4. Run the filter network on the batch
+            scores_batch = model.net(edge_features).squeeze(-1).clone()
+            filter_scores.append(scores_batch)
 
-                # 3. Concatenate features for the batch (this tensor is now much smaller)
-                edge_features = torch.cat([source_nodes, target_nodes], dim=-1)
-
-                # 4. Run the filter network on the batch
-                scores_batch = model.net(edge_features).squeeze(-1)
-                filter_scores.append(scores_batch)
-
-                # Explicitly free memory (optional, but can help in tight situations)
-                del edge_batch, source_nodes, target_nodes, edge_features, scores_batch
+            # Explicitly free memory (optional, but can help in tight situations)
+            del edge_batch, source_nodes, target_nodes, edge_features, scores_batch
 
         # 5. Concatenate the results from all batches
         filter_scores = torch.cat(filter_scores)
 
-    return filter_scores.sigmoid(), sorted_edge_index, gnn_embedding.clone()
+    # Return integer edge indices to avoid accidental dtype promotion
+    return filter_scores.sigmoid(), sorted_edge_index.clone().long(), gnn_embedding.clone()
