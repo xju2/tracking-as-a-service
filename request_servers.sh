@@ -14,4 +14,7 @@
 
 
 OUTPUT=tracking_ready.json
-./scripts/start-tritonserver.sh -o $OUTPUT
+MODELNAME="DoubleMetricLearning"
+echo "Loading model: $MODELNAME"
+
+./scripts/start-tritonserver.sh -o $OUTPUT -m $MODELNAME
