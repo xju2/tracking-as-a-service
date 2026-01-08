@@ -22,6 +22,7 @@ instance_group [
   {
     count: 1
     kind: KIND_GPU
+    gpus: [ 0, 1, 2, 3 ]
    }
 ]
 
