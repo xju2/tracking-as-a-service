@@ -20,7 +20,8 @@ OUTPUTFILE="$(realpath $OUTPUTFILE)"
 WORK_DIR="$(dirname "${BASH_SOURCE[0]}" )/../"
 WORK_DIR=$(readlink -f $WORK_DIR)
 TRITON_MODELS="${WORK_DIR}/models"
-TRITON_IMAGE="docker.io/docexoty/tritonserver:latest"
+TRITON_IMAGE="docker.io/alinutzal/tritonserver:latest"
+echo "Using Triton image: $TRITON_IMAGE"
 
 TRITON_JOBS_DIR="${WORK_DIR}/jobs"
 mkdir -p $TRITON_JOBS_DIR

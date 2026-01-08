@@ -134,6 +134,7 @@ class MetricLearningInference:
             torch.jit.load(filtering_path).to(self.config.device, non_blocking=True).eval()
         )
         self.gnn_model = torch.jit.load(gnn_path).to(self.config.device, non_blocking=True).eval()
+        print("Models loaded successfully", self.gnn_model)
 
         device = self.config.device
         self.embedding_scale = torch.tensor(config.embedding_node_scale, device=device)

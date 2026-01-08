@@ -2,11 +2,23 @@
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+[project]
+name = "tracking-as-a-service"
+version = "2.0.0"
+description = "Tracking as a Service."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = {file = "LICENSE"}
+keywords = ["tracking", "HEP", "Triton", "IaaS"]
+authors = [
+  {name = "X. Ju", email = "xju@lbl.gov" }
+]
+
+
 [tool.ruff]
 line-length = 99
 preview = true
 exclude = ["*.ipynb"]
-
 [tool.ruff.format]
 docstring-code-format = true
 quote-style = "double"
@@ -19,8 +31,13 @@ ignore = [
     "D100", "D101", "D102", "D103", "D104", "D105", "D205", "D401", "D203", "D213", "D107", "D413",
     "S101", "S404", "S602", "S403", "S105", "S301", "PLR2004", "PLR0912", "PLR0913",
     "PLR0914", "PLR0915", "PLR0917", "PLC0415", "PLW1514", "PLR6301", "PLR1702", "PLR0904",
-    "F401", "E501", "PD901", "C901", "I001", "COM", "EM", "FIX", "FBT", "G004",
+    "F401", "E501", "C901", "I001", "COM", "EM", "FIX", "FBT", "G004",
     "N802", "N803", "N806", "N812", "T201", "PTH123", "RUF015", "RUF017", "ERA", "ISC001",
     "RET504", "SLF001",
     "TD003", "ARG002", "N999", "TRY201", "TRY003", "ANN", "CPY", "INP001"
 ]
+
+[tool.poetry.dependencies]
+torch = "^2.8.0"
+torch-geometric = "^2.6.1"
+numba = "^0.62.1"

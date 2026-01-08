@@ -162,3 +162,10 @@ cython_debug/
 #.idea/
 
 jobs/
+
+
+*.nsys-rep
+*.sqlite
+*.qdstrm
+*.ipynb_checkpoints
+*.pt
