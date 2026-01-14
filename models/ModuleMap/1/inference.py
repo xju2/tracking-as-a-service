@@ -12,7 +12,7 @@ from torch_geometric.transforms import RemoveIsolatedNodes
 from torch_geometric.utils import to_networkx
 import torch.cuda.nvtx as nvtx
 
-from pymmg import GraphBuilder
+from module_map_graph import build_graph
 from torch_model_inference import run_torch_model
 import fastwalkthrough as walkutils
 import time
@@ -84,12 +84,9 @@ class ModuleMapInference:
         self.device = self.config.device
 
         print("Path: ", self.config.module_map_pattern_path)
-        self.graph_builder = GraphBuilder(
-            module_map_path=str(self.config.module_map_pattern_path),
-            device=self.config.device_id,
-        )
+        self.module_map_path = str(self.config.module_map_pattern_path)
 
-        gnn_path = "./MM_minmax_ignn2.ckpt"
+        gnn_path = Path(__file__).parent / "MM_minmax_ignn2.ckpt"
 
         # load the checkpoint
         print(f"Loading checkpoint from {gnn_path}")
@@ -161,20 +158,39 @@ class ModuleMapInference:
         if nvtx_enabled:
             nvtx.range_push("Build Edges")
 
-        edge_index = self.graph_builder.build_edge_index(
+        # Create a graph object with hit data for build_graph
+        from dataclasses import dataclass as dc
+
+        @dc
+        class GraphData:
+            hit_id: torch.Tensor
+            hit_module_id: torch.Tensor
+            hit_x: torch.Tensor
+            hit_y: torch.Tensor
+            hit_z: torch.Tensor
+            edge_index: torch.Tensor = None
+
+        graph = GraphData(
             hit_id=hit_id,
             hit_module_id=node_features[:, self.input_node_features.index("module_id")],
             hit_x=node_features[:, self.input_node_features.index("x")],
             hit_y=node_features[:, self.input_node_features.index("y")],
             hit_z=node_features[:, self.input_node_features.index("z")],
-            nb_hits=hit_id.shape[0],
         )
+
+        edge_index = build_graph(
+            graph,
+            module_map_path=self.module_map_path,
+            device=self.config.device_id,
+        )
+
+        # Move edge_index to the same device as model
+        edge_index = edge_index.to(device)
 
         if debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
-        # edge_index = edge_index.to(device)
 
-        # # order the edges by their distance from the collision point.
+        # order the edges by their distance from the collision point.
         R = (
             node_features[:, self.input_node_features.index("r")] ** 2
             + node_features[:, self.input_node_features.index("z")] ** 2
@@ -186,7 +202,6 @@ class ModuleMapInference:
 
         gnn_input /= torch.tensor(self.config.gnn_node_scale, device=device).float()
 
-        # calculate edge features: dr, dphi, dz, deta, phislope, rphislope
         def reset_angle(angles):
             angles[angles > torch.pi] -= 2 * torch.pi
             angles[angles < -torch.pi] += 2 * torch.pi
