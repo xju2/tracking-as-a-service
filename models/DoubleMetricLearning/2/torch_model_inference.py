@@ -21,7 +21,7 @@ def run_torch_model(model: torch.nn.Module, auto_cast: bool, *inputs):
     assert len(inputs) > 0, "At least one input must be provided."
     with torch.inference_mode():
         if auto_cast:
-            # convert model and inputs to half precision (in-place)
+            # convert inputs to half precision (in-place for floats), leave integer/index tensors unchanged
             half_inputs = tuple(_as_half(x) for x in inputs)
             output = model(*half_inputs)
         else:
@@ -40,16 +40,16 @@ def run_gnn_filter(
     batches = 4
     with torch.inference_mode():
         sorted_edge_index = sort_edge_index(edge_index, sort_by_row=False)
-        device_type = x.device.type
-        if auto_cast and check_autocast_support(device_type):
-            with torch.autocast(device_type, dtype=dtype):
-                gnn_embedding = model.gnn(x, sorted_edge_index).clone()
-                filter_scores = [
-                    model.net(
-                        torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
-                    ).squeeze(-1).clone()
-                    for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
-                ]
+        # Use explicit half-precision conversion when requested (no autocast)
+        if auto_cast:
+            x_half = _as_half(x)
+            gnn_embedding = model.gnn(x_half, sorted_edge_index).clone()
+            filter_scores = [
+                model.net(
+                    torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
+                ).squeeze(-1).clone()
+                for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
+            ]
         else:
             gnn_embedding = model.gnn(x, sorted_edge_index).clone()
             filter_scores = [
@@ -81,7 +81,7 @@ def run_gnn_filter_optimized(
         num_edges = sorted_edge_index.shape[1]
        # If requested, convert model components and inputs to half precision
         if auto_cast:
-            gnn_embedding = model.gnn(x.half(), sorted_edge_index).clone()
+            gnn_embedding = model.gnn(_as_half(x), sorted_edge_index).clone()
         else:
             gnn_embedding = model.gnn(x, sorted_edge_index).clone()
 

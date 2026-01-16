@@ -5,6 +5,13 @@ import os
 from pathlib import Path
 from operator import itemgetter
 
+# Enable detailed torch.compile / dynamo/inductor debug logging when running
+# These must be set before importing torch so that Dynamo/Inductor pick them up.
+os.environ.setdefault("TORCHDYNAMO_LOG_LEVEL", "debug")
+os.environ.setdefault("TORCH_COMPILE_DEBUG", "1")
+os.environ.setdefault("TORCHINDUCTOR_DEBUG", "1")
+os.environ.setdefault("TORCHINDUCTOR_VERBOSE", "1")
+
 import frnn
 import networkx as nx
 import numpy as np
@@ -602,7 +609,7 @@ class MetricLearningInference:
         assemble_t1 = time.perf_counter()
         assemble_time = assemble_t1 - assemble_t0
 
-        print(f"{int(time.time())},{embed_time:.6f},{edge_time:.6f},{filter_time:.6f},{gnn_time:.6f},{track_time:.6f},{assemble_time:.6f},{total_time:.6f}\n")
+        print(f"{int(time.time())},{embed_time:.6f},{edge_time:.6f},{filter_time:.6f},{gnn_time:.6f},{track_time:.6f},{assemble_time:.6f},{total_time:.6f}")
         # write candidates to a file.
         if debug:
             print("track_candidates", track_candidates[:20])
