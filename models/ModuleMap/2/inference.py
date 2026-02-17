@@ -86,7 +86,7 @@ class ModuleMapInference:
         print("Path: ", self.config.module_map_pattern_path)
         self.module_map_path = str(self.config.module_map_pattern_path)
 
-        gnn_path = Path(__file__).parent / "MM_meanrms_ignn2.ckpt"
+        gnn_path = Path(__file__).parent / "MM_meanrms_trained_IGNN2_L2IT_scaillou_best--val_loss=0.003805-epoch=397(1).ckpt"
 
         # load the checkpoint
         print(f"Loading checkpoint from {gnn_path}")

@@ -2,8 +2,16 @@ name: "DoubleMetricLearning"
 backend: "python"
 
 version_policy: {
-  specific: { versions: [1] }
+  specific: { versions: [2] }
 }
+
+instance_group [
+  {
+    kind: KIND_GPU
+    count: 1
+    gpus: [0]
+  }
+]
 
 input [
   {
@@ -31,17 +39,17 @@ instance_group [
 
 parameters: {
   key: "auto_cast",
-  value: {string_value: "True"}
+  value: {string_value: "False"}
 }
 
 parameters: {
   key: "compiling",
-  value: {string_value: "True"}
+  value: {string_value: "False"}
 }
 
 parameters: {
   key: "debug",
-  value: {string_value: "False"}
+  value: {string_value: "True"}
 }
 
 parameters: {

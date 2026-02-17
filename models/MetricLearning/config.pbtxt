@@ -1,6 +1,18 @@
 name: "MetricLearning"
 backend: "python"
 
+version_policy: {
+  specific: { versions: [4] }
+}
+
+instance_group [
+  {
+    kind: KIND_GPU
+    count: 1
+    gpus: [0]
+  }
+]
+
 input [
   {
     name: "FEATURES"
@@ -17,13 +29,6 @@ output [
   }
 ]
 
-
-instance_group [
-  {
-    count: 1
-    kind: KIND_GPU
-   }
-]
 
 parameters: {
   key: "auto_cast",

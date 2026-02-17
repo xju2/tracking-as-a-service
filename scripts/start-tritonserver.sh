@@ -1,7 +1,7 @@
 #!/bin/bash
 
 OUTPUTFILE="node_id.txt"
-MODELNAME=""
+MODEL_NAME=""
 
 while getopts "o:m:" opt; do
   case $opt in
@@ -9,7 +9,7 @@ while getopts "o:m:" opt; do
       OUTPUTFILE=$OPTARG
       ;;
     m)
-      MODELNAME=$OPTARG
+      MODEL_NAME=$OPTARG
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -19,10 +19,9 @@ while getopts "o:m:" opt; do
 done
 
 OUTPUTFILE="$(realpath $OUTPUTFILE)"
-if [ -n "$MODELNAME" ]; then
-  echo "Requested model: $MODELNAME"
+if [ -n "$MODEL_NAME" ]; then
+  echo "Requested model: $MODEL_NAME"
 fi
-
 
 WORK_DIR="$(dirname "${BASH_SOURCE[0]}" )/../"
 WORK_DIR=$(readlink -f $WORK_DIR)
@@ -69,4 +68,4 @@ podman-hpc run -it --rm --gpu --shm-size=20GB -p 8002:8002 -p 8001:8001 -p 8000:
         $TRITON_MODEL_FLAGS \
         --allow-metrics=true \
         $TRITON_LOG_VERBOSE_FLAGS  2>&1 \
-        | tee $TRITON_JOBS_DIR/$TRITON_SEVER_NAME.log
+    | tee $TRITON_JOBS_DIR/$TRITON_SEVER_NAME.log

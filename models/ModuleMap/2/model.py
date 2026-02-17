@@ -9,7 +9,7 @@ import torch
 import triton_python_backend_utils as pb_utils
 from torch.utils.dlpack import from_dlpack
 
-from .inference import MetricLearningInference, MetricLearningInferenceConfig
+from .inference import ModuleMapInference, ModuleMapInferenceConfig
 
 os.environ["RAPIDS_NO_INITIALIZE"] = "1"
 
@@ -37,8 +37,17 @@ class TritonPythonModel:
         """
         # You must parse model_config. JSON string is not parsed here
         self.model_config = model_config = json.loads(args["model_config"])
-        device_id = int(args["model_instance_device_id"])
-        self.model_instance_device_id = device_id
+        self.model_instance_device_id = json.loads(args["model_instance_device_id"])
+
+        # store device in consistent format.
+        if torch.cuda.is_available():
+            self.device = f"cuda:{self.model_instance_device_id}"
+            self.device_id = self.model_instance_device_id
+        else:
+            self.device = "cpu"
+            self.device_id = "cpu"
+
+        torch.cuda.set_device(self.device_id)
 
         parameters = model_config["parameters"]
         self.debug = False
@@ -52,16 +61,14 @@ class TritonPythonModel:
 
         self.save_event = get_parameter("save_event").lower() == "true"
         model_path = Path(args["model_repository"]) / args["model_version"]
-        # --- IMPORTANT: bind this model instance to its GPU ---
-        if torch.cuda.is_available():
-            torch.cuda.set_device(device_id)
-            device = f"cuda:{device_id}"
-        else:
-            device = "cpu"
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         auto_cast = get_parameter("auto_cast").lower() == "true"
         compiling = get_parameter("compiling").lower() == "true"
-        config = MetricLearningInferenceConfig(
+        # module_map_pattern_path is expected as a model parameter in config.pbtxt
+        module_map_pattern_path = get_parameter("module_map_pattern_path")
+        config = ModuleMapInferenceConfig(
             model_path=model_path,
+            module_map_pattern_path=module_map_pattern_path,
             device=device,
             auto_cast=auto_cast,
             compiling=compiling,
@@ -69,7 +76,7 @@ class TritonPythonModel:
             save_debug_data=self.save_event,
         )
 
-        self.inference = MetricLearningInference(config)
+        self.inference = ModuleMapInference(config)
 
         # Get OUTPUT0 configuration
         output0_config = pb_utils.get_output_config_by_name(model_config, "LABELS")
@@ -106,7 +113,7 @@ class TritonPythonModel:
         # and create a pb_utils.InferenceResponse for each of them.
         for request in requests:
             features = pb_utils.get_input_tensor_by_name(request, "FEATURES")
-            features = from_dlpack(features.to_dlpack()).to(self.model_instance_device_id)
+            features = from_dlpack(features.to_dlpack()).to(self.device)
             if self.debug:
                 print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
 

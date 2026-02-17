@@ -1,2 +1,2 @@
 *.ckpt filter=lfs diff=lfs merge=lfs -text
-models/ModuleMap/1/*.root filter=lfs diff=lfs merge=lfs -text
+models/ModuleMap/*/*.root filter=lfs diff=lfs merge=lfs -text
