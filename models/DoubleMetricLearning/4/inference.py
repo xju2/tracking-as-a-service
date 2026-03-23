@@ -1,27 +1,22 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from operator import itemgetter
 
+import fastwalkthrough as walkutils
 import frnn
-import networkx as nx
 import numpy as np
 import torch
-from torch_geometric.data import Data
-from torch_geometric.transforms import RemoveIsolatedNodes
-from torch_geometric.utils import to_networkx
-
-from torch_model_inference import run_gnn_filter, run_torch_model
-import fastwalkthrough as walkutils
-import time
-
 from double_metric_learning import DoubleMetricLearning
 from interaction_gnn import (
-    RecurrentInteractionGNN2,
     ChainedInteractionGNN2,
     GNNFilterJitable,
+    RecurrentInteractionGNN2,
 )
+from torch_geometric.data import Data
+from torch_geometric.transforms import RemoveIsolatedNodes
+from torch_model_inference import run_gnn_filter, run_torch_model
 
 torch.manual_seed(42)
 torch.set_float32_matmul_precision("high")
@@ -243,7 +238,6 @@ class MetricLearningInference:
         ]
         embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
 
-
         src_embedding, tgt_embedding = run_torch_model(
             self.embedding_model, self.config.auto_cast, embedding_inputs
         )
@@ -261,7 +255,6 @@ class MetricLearningInference:
         edge_index = build_edges(
             src_embedding, tgt_embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
-
 
         if edge_index.shape[1] < 2:
             return track_candidates
