@@ -51,16 +51,13 @@ class TritonPythonModel:
 
         parameters = model_config["parameters"]
         self.debug = False
-        if "debug" in parameters:
-            self.debug = parameters["debug"]["string_value"].lower() == "true"
 
         def get_parameter(name):
             if name not in parameters:
                 raise ValueError(f"Parameter {name} is required but not provided.")
             return parameters[name]["string_value"]
 
-        self.save_event = get_parameter("save_event").lower() == "true"
-        model_path = Path(args["model_repository"]) / "3"
+        model_path = Path(args["model_repository"]) / args["model_version"]
         auto_cast = get_parameter("auto_cast").lower() == "true"
         compiling = get_parameter("compiling").lower() == "true"
         config = MetricLearningInferenceConfig(
@@ -69,7 +66,7 @@ class TritonPythonModel:
             auto_cast=auto_cast,
             compiling=compiling,
             debug=self.debug,
-            save_debug_data=self.save_event,
+            save_debug_data=False,
         )
 
         self.inference = MetricLearningInference(config)
