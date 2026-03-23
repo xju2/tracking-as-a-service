@@ -227,9 +227,6 @@ class MetricLearningInference:
         hit_id: torch.Tensor | None = None,
     ):
         device = self.config.device
-        debug = self.config.debug
-        save_debug_data = self.config.save_debug_data
-        out_debug_data_name = "debug_data.pt"
 
         track_candidates = np.array([-1], dtype=np.int64)
         if node_features is None or node_features.shape[0] < 3:
