@@ -472,7 +472,7 @@ class MetricLearningInference:
             sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
 
             n = len(sorted_trk)
-            track_candidates[i : i + n] = sorted_trk.tolist()
+            track_candidates[i : i + n] = sorted_trk.cpu().tolist()
             i += n
             track_candidates[i] = -1
             i += 1

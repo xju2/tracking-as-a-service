@@ -4,7 +4,7 @@ This document describes how to run the metric learning inference pipeline using 
 
 ## How to Run
 
-To run the inference script, use the following command from within the `models/DoubleMetricLearning/4` directory:
+To run the inference script, use the following command from within the `models/DoubleMetricLearning/3` directory:
 
 ```bash
 python inference.py -i <path_to_input_data> [options]

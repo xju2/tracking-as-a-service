@@ -73,7 +73,7 @@ class MetricLearningInferenceConfig:
     r_max: float = 0.14
     k_max: int = 1000
     filter_cut: float = 0.01
-    filter_batches: int = 2**16
+    filter_batches: int = 10
     cc_cut: float = 0.01
     walk_min: float = 0.1
     walk_max: float = 0.6
@@ -383,7 +383,7 @@ class MetricLearningInference:
             sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
 
             n = len(sorted_trk)
-            track_candidates[i : i + n] = sorted_trk.tolist()
+            track_candidates[i : i + n] = sorted_trk.cpu().tolist()
             i += n
             track_candidates[i] = -1
             i += 1

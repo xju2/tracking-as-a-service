@@ -47,7 +47,8 @@ class TritonPythonModel:
             self.device = "cpu"
             self.device_id = "cpu"
 
-        torch.cuda.set_device(self.device_id)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(self.device_id)
 
         parameters = model_config["parameters"]
         self.debug = False
