@@ -1,13 +1,10 @@
-import os
-
-# 3rd party imports
-from torch_geometric.loader import DataLoader
-import torch
-import torch.nn.functional as F
 import torch.nn as nn
 
+# 3rd party imports
+import torch.nn.functional as F
+
 # Local imports
-from utils import make_mlp, build_edges, graph_intersection
+from utils import make_mlp
 
 
 class DoubleMetricLearning(nn.Module):
