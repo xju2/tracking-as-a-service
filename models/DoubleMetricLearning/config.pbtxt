@@ -34,13 +34,3 @@ parameters: {
   key: "compiling",
   value: {string_value: "False"}
 }
-
-parameters: {
-  key: "debug",
-  value: {string_value: "False"}
-}
-
-parameters: {
-  key: "save_event",
-  value: {string_value: "False"}
-}
