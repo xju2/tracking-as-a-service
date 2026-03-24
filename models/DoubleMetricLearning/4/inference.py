@@ -22,6 +22,17 @@ torch.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 
 
+def to_trk_tensor(trk, device):
+    # Convert numba.typed.List or Python list -> numpy
+    if not isinstance(trk, np.ndarray):
+        trk = np.array(trk, dtype=np.int64)
+    else:
+        trk = trk.astype(np.int64, copy=False)
+
+    # Finally -> torch tensor on correct device
+    return torch.as_tensor(trk, dtype=torch.long, device=device)
+
+
 def build_edges(
     query: torch.Tensor,
     database: torch.Tensor,
@@ -149,6 +160,11 @@ class MetricLearningInference:
         self.gnn_model = new_gnn
         self.gnn_model.to(self.config.device).eval()
 
+        device = self.config.device
+        self.embedding_scale = torch.tensor(config.embedding_node_scale, device=device)
+        self.filter_scale = torch.tensor(config.filter_node_scale, device=device)
+        self.gnn_scale = torch.tensor(config.gnn_node_scale, device=device)
+
         if self.config.compiling:
             print("compiling models works now...")
             torch.set_float32_matmul_precision("high")
@@ -236,7 +252,7 @@ class MetricLearningInference:
         embedding_inputs = node_features[
             :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
         ]
-        embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
+        embedding_inputs /= self.embedding_scale
 
         src_embedding, tgt_embedding = run_torch_model(
             self.embedding_model, self.config.auto_cast, embedding_inputs
@@ -250,7 +266,7 @@ class MetricLearningInference:
             filtering_inputs = node_features[
                 :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
             ]
-            filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
+            filtering_inputs /= self.filter_scale
 
         edge_index = build_edges(
             src_embedding, tgt_embedding, r_max=self.config.r_max, k_max=self.config.k_max
@@ -288,7 +304,7 @@ class MetricLearningInference:
         gnn_input = node_features[
             :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
         ]
-        gnn_input /= torch.tensor(self.config.gnn_node_scale, device=device).float()
+        gnn_input /= self.gnn_scale
 
         # calculate edge features: dr, dphi, dz, deta, phislope, rphislope
         def reset_angle(angles):
@@ -324,17 +340,9 @@ class MetricLearningInference:
             )
             r_avg = (r[dst] + r[src]) / 2.0
             rphislope = torch.nan_to_num(torch.multiply(r_avg, phislope), nan=0.0)
-            return {
-                "dr": dr,
-                "dphi": dphi,
-                "dz": dz,
-                "deta": deta,
-                "phislope": phislope,
-                "rphislope": rphislope,
-            }
+            return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
 
-        edge_features_dict = calculate_edge_features()
-        edge_features = torch.stack(list(edge_features_dict.values()), dim=1)
+        edge_features = calculate_edge_features().to(device).float()
 
         edge_scores = (
             run_torch_model(
@@ -351,7 +359,7 @@ class MetricLearningInference:
 
         score_name = "edge_scores"
         graph = Data(
-            R=R,
+            # R=R,
             edge_index=edge_index,
             hit_id=hit_id,
             num_nodes=node_features.shape[0],
@@ -371,11 +379,11 @@ class MetricLearningInference:
 
         i = 0
         for trk in tracks:
-            trk_tensor = torch.tensor(trk, device=R.device)
+            trk_tensor = to_trk_tensor(trk, device)
             sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
 
             n = len(sorted_trk)
-            track_candidates[i : i + n] = sorted_trk.cpu().tolist()
+            track_candidates[i : i + n] = sorted_trk.tolist()
             i += n
             track_candidates[i] = -1
             i += 1
