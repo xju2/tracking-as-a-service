@@ -452,14 +452,7 @@ class MetricLearningInference:
             )
             r_avg = (r[dst] + r[src]) / 2.0
             rphislope = torch.nan_to_num(torch.multiply(r_avg, phislope), nan=0.0)
-            return {
-                "dr": dr,
-                "dphi": dphi,
-                "dz": dz,
-                "deta": deta,
-                "phislope": phislope,
-                "rphislope": rphislope,
-            }
+            return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
 
         edge_features_dict = calculate_edge_features()
         edge_features = torch.stack([v.to(device).float() for v in edge_features_dict.values()], dim=1)
@@ -544,7 +537,7 @@ class MetricLearningInference:
             sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
 
             n = len(sorted_trk)
-            track_candidates[i : i + n] = sorted_trk.tolist()
+            track_candidates[i : i + n] = sorted_trk.cpu().tolist()
             i += n
             track_candidates[i] = -1
             i += 1

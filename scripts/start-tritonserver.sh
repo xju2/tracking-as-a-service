@@ -36,6 +36,13 @@ TRITON_LOG_VERBOSE=false
 
 TRITON_LOG_VERBOSE_FLAGS=""
 TRITON_SEVER_NAME="${SLURMD_NODENAME}"
+TRITON_MODEL_FLAGS="--model-repository=/models"
+if [ -n "$MODEL_NAME" ]; then
+    TRITON_MODEL_FLAGS="${TRITON_MODEL_FLAGS} --model-control-mode=explicit --load-model=${MODEL_NAME}"
+    echo "Using explicit model load for: ${MODEL_NAME}"
+else
+    echo "No model provided; loading all models (implicit control mode)"
+fi
 
 echo "{" > $OUTPUTFILE
 echo "  \"url\": \"$SLURMD_NODENAME\"," >> $OUTPUTFILE

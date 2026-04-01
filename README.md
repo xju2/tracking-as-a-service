@@ -3,10 +3,15 @@
 This repository contains a set of Tracking models that can be used as a service.
 
 ## Instructions
-1. Launch the server:
+1. Launch the server with an interactive job for 4 hours
 ```bash
 srun --job-name=TritonTest -C "gpu&hbm80g" -N 1 -G 1 -c 10 -n 1 -t 4:00:00 -A m3443 \
   -q interactive /bin/bash -c "./scripts/start-tritonserver.sh -o triton_ready.txt"
+```
+
+Or, launch the server with a regular batch job for 48 hours
+```bash
+sbatch -G 1 request_servers.sh
 ```
 
 2. Run the client:
@@ -37,6 +42,4 @@ podman-hpc build --format docker -f Dockerfile -t docexoty/tritonserver
 ```
 poetry env use /global/common/software/nersc/pe/conda-envs/24.1.0/python-3.11/nersc-python/bin/python
 
-poetry install
-
-```
+poetry install --no-root

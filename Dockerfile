@@ -1,9 +1,32 @@
 # syntax=docker/dockerfile:experimental
 
+# ------------------------
+# Build stage: boost-builder
+# Compile Boost 1.87 and install to /usr/local
+# ------------------------
+FROM ubuntu:20.04 AS boost-builder
+ARG BOOST_VERSION_DOTTED=1.87.0
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+RUN set -eux; \
+  echo "tzdata tzdata/Areas select Etc" | debconf-set-selections; \
+  echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections; \
+  apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential autotools-dev automake libtool python3-dev ca-certificates curl libboost-regex-dev && \
+  git clone --depth 1 --branch boost-${BOOST_VERSION_DOTTED} https://github.com/boostorg/boost.git /tmp/boost; \
+  cd /tmp/boost; \
+  git submodule update --init --recursive; \
+  # Include graph library so CMake find_package(boost_graph) succeeds for PyModuleMapGraph
+  ./bootstrap.sh --with-libraries=program_options,serialization,regex,filesystem,test,graph; \
+  ./b2 -j2 link=shared cxxflags="-fPIC" variant=release install; \
+  rm -rf /tmp/boost; \
+  apt-get remove -y --purge git build-essential autotools-dev automake libtool python3-dev && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*;
+
 FROM nvcr.io/nvidia/tritonserver:24.05-py3
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 # nvcc version: 12.4 ## nvcc --version
 # cudnn version: 9.1.0  ## find / -name "libcudnn*" 2>/dev/null
-# https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tritonserver
 
 LABEL description="Triton Server backend with other dependencies for Tracking-as-a-Service"
 LABEL version="1.0"

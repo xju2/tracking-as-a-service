@@ -4,6 +4,18 @@ from torch_geometric.utils import sort_edge_index
 dtype = torch.float16
 
 
+# Assume model is a torch.jit.RecursiveScriptModule
+def get_device(module: torch.jit.RecursiveScriptModule):
+    # Check parameters first
+    for p in module.parameters():
+        return p.device
+    # If no parameters, check buffers
+    for b in module.buffers():
+        return b.device
+    # If neither exist, the module has no tensors
+    return None
+
+
 def check_autocast_support(device_type: str):
     if torch.__version__ < "2.4.0":
         return device_type == "cuda"

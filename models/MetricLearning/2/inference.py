@@ -15,7 +15,26 @@ from torch_geometric.utils import to_networkx
 from torch_model_inference import run_gnn_filter, run_torch_model
 import fastwalkthrough as walkutils
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - [%(process)d,%(thread)d] - %(name)s - %(levelname)s - %(message)s",
+)
+
+
 torch.manual_seed(42)
+
+
+def to_trk_tensor(trk, device):
+    # Convert numba.typed.List or Python list -> numpy
+    if not isinstance(trk, np.ndarray):
+        trk = np.array(trk, dtype=np.int64)
+    else:
+        trk = trk.astype(np.int64, copy=False)
+
+    # Finally -> torch tensor on correct device
+    return torch.as_tensor(trk, dtype=torch.long, device=device)
 
 
 def build_edges(
@@ -94,6 +113,11 @@ class MetricLearningInference:
     def __init__(self, config: MetricLearningInferenceConfig):
         self.config = config
         print(self.config)
+
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.DEBUG if self.config.debug else logging.INFO)
+        self.logger = logger
+
         model_path = (
             Path(self.config.model_path)
             if not isinstance(self.config.model_path, Path)
@@ -111,6 +135,11 @@ class MetricLearningInference:
         )
         self.gnn_model = torch.jit.load(gnn_path).to(self.config.device, non_blocking=True).eval()
         print("Models loaded successfully", self.gnn_model)
+
+        device = self.config.device
+        self.embedding_scale = torch.tensor(config.embedding_node_scale, device=device)
+        self.filter_scale = torch.tensor(config.filter_node_scale, device=device)
+        self.gnn_scale = torch.tensor(config.gnn_node_scale, device=device)
 
         if self.config.compiling:
             print("compiling models do not work now...")
@@ -168,6 +197,9 @@ class MetricLearningInference:
         self.input_data_count = 0
 
     def forward(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
+        self.logger.debug(
+            f"Input node devices: {node_features.device}, Model device: {self.config.device}"
+        )
         device = self.config.device
         debug = self.config.debug
         save_debug_data = self.config.save_debug_data
@@ -193,13 +225,13 @@ class MetricLearningInference:
         embedding_inputs = node_features[
             :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
         ]
-        embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
+        embedding_inputs /= self.embedding_scale
 
         embedding = run_torch_model(self.embedding_model, self.config.auto_cast, embedding_inputs)
-        if debug:
-            print(f"after embedding, shape = {embedding.shape}")
-            print("embedding data", embedding[0])
-            print("embedding data type", embedding.dtype)
+
+        self.logger.debug(f"after embedding, shape = {embedding.shape}")
+        self.logger.debug("embedding data: %s", embedding[0])
+        self.logger.debug("embedding data type: %s", embedding.dtype)
 
         out_data = Data()
         if save_debug_data:
@@ -215,7 +247,7 @@ class MetricLearningInference:
             filtering_inputs = node_features[
                 :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
             ]
-            filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
+            filtering_inputs /= self.filter_scale
 
         if save_debug_data:
             out_data.filtering_nodes = filtering_inputs
@@ -225,9 +257,8 @@ class MetricLearningInference:
             embedding, embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
 
-        if debug:
-            print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
-        else:
+        self.logger.debug("Number of edges after embedding: %s", f"{edge_index.shape[1]:,}")
+        if not debug:
             del embedding
 
         if save_debug_data:
@@ -243,14 +274,15 @@ class MetricLearningInference:
             node_features[:, self.input_node_features.index("r")] ** 2
             + node_features[:, self.input_node_features.index("z")] ** 2
         )
+        # r3 = R.clone().cpu().numpy()
+
         edge_flip_mask = (R[edge_index[0]] > R[edge_index[1]]) | (
             (R[edge_index[0]] == R[edge_index[1]]) & (edge_index[0] > edge_index[1])
         )
         edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
         edge_index = torch.unique(edge_index, dim=-1)
 
-        if debug:
-            print(f"after removing duplications: {edge_index.shape[1]:,}")
+        self.logger.debug(f"after removing duplications: {edge_index.shape[1]:,}")
 
         if save_debug_data:
             out_data.filter_edge_list_before = edge_index
@@ -264,9 +296,8 @@ class MetricLearningInference:
             edge_index,
         )
 
-        if debug:
-            print("edge_score", edge_scores[:10])
-            print("edge_index", edge_index[:, :10])
+        self.logger.debug("edge_score: %s", edge_scores[:10])
+        self.logger.debug("edge_index: %s", edge_index[:, :10])
 
         if save_debug_data:
             out_data.filter_node_features = filtering_inputs
@@ -279,14 +310,13 @@ class MetricLearningInference:
         if edge_index.shape[1] < 2:
             return track_candidates
 
-        if debug:
-            print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
+        self.logger.debug(f"Number of edges after filtering: {edge_index.shape[1]:,}")
 
         # prepare GNN inputs
         gnn_input = node_features[
             :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
         ]
-        gnn_input /= torch.tensor(self.config.gnn_node_scale, device=device).float()
+        gnn_input /= self.gnn_scale
 
         # calculate edge features: dr, dphi, dz, deta, phislope, rphislope
         def reset_angle(angles):
@@ -324,15 +354,14 @@ class MetricLearningInference:
             rphislope = torch.nan_to_num(torch.multiply(r_avg, phislope), nan=0.0)
             return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
 
-        edge_features = calculate_edge_features()
+        edge_features = calculate_edge_features().to(device).float()
 
         edge_scores = run_torch_model(
             self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
         ).sigmoid()
 
         # CC and Walkthrough
-        if debug:
-            print("After GNN...")
+        self.logger.debug("After GNN...")
 
         if save_debug_data:
             out_data.gnn_scores = edge_scores
@@ -347,46 +376,56 @@ class MetricLearningInference:
 
         score_name = "edge_scores"
         graph = Data(
-            R=R,
+            # R=R,
             edge_index=edge_index,
             hit_id=hit_id,
             num_nodes=node_features.shape[0],
         ).to(device)
+
         graph[score_name] = edge_scores
         graph = RemoveIsolatedNodes()(graph)
 
         all_trkx = {}
         all_trkx["cc"], graph = walkutils.get_simple_path(graph)
-        if debug:
-            print("the graph information")
-            # with open("graph_info.txt", "w") as f:
-            #     f.write(f"{G.nodes(data=True)}\n")
-            #     f.write(f"{G.edges(data=True)}\n")
+        # if debug:
+        #     print("the graph information")
+        #     # with open("graph_info.txt", "w") as f:
+        #     #     f.write(f"{G.nodes(data=True)}\n")
+        #     #     f.write(f"{G.edges(data=True)}\n")
         all_trkx["walk"] = walkutils.walk_through(
             graph, score_name, self.config.walk_min, self.config.walk_max, False
         )
-        if debug:
-            print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
-            print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
+        self.logger.debug(
+            "Number of tracks found by CC: %s, %s.", f"{len(all_trkx['cc'])}", device
+        )
+        self.logger.debug(
+            "Number of tracks found by Walkthrough: %s, %s", f"{len(all_trkx['walk'])}", device
+        )
 
         tracks = all_trkx["cc"] + list(all_trkx["walk"])
         total_length = sum(len(trk) + 1 for trk in tracks)
         track_candidates = np.empty(total_length, dtype=int)
 
+        self.logger.debug("Up to here, device: %s", device)
+
         i = 0
         for trk in tracks:
-            trk_tensor = torch.tensor(trk, device=R.device)
+            # trk_tensor = np.array(trk, dtype=np.int64)
+            # sorted_trk = trk_tensor[np.argsort(r3[trk_tensor])]
+            trk_tensor = to_trk_tensor(trk, device)
             sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
+            # trk_tensor = torch.tensor(trk, device=device, dtype=torch.int64)
+            # sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
 
             n = len(sorted_trk)
-            track_candidates[i : i + n] = sorted_trk.cpu().tolist()
+            track_candidates[i : i + n] = sorted_trk.tolist()
             i += n
             track_candidates[i] = -1
             i += 1
 
         # write candidates to a file.
-        if debug:
-            print("track_candidates", track_candidates[:20])
+        self.logger.debug("track_candidates %s", track_candidates[:20])
+
         if save_debug_data:
             out_data.track_candidates = torch.from_numpy(track_candidates).to(torch.int64)
             torch.save(out_data, out_debug_data_name)

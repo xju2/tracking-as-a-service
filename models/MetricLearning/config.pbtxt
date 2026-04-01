@@ -30,6 +30,14 @@ output [
 ]
 
 
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 0 ]
+   }
+]
+
 parameters: {
   key: "auto_cast",
   value: {string_value: "False"}
