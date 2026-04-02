@@ -17,18 +17,10 @@ def run_torch_model(model: torch.nn.Module, auto_cast: bool, *inputs):
         device_type = "cuda:0"  # device.type if hasattr(device, 'type') else str(device)
         if auto_cast and check_autocast_support(device_type):
             with torch.autocast(device_type, dtype=dtype):
-                output = model(*inputs)
-                if isinstance(output, tuple):
-                    return tuple(o.clone() for o in output)
-                else:
-                    return output.clone()  # .to(torch.float32)
+                output = model(*inputs).clone()  # .to(torch.float32)
                 # print("compiled amp:", timed(lambda: model(*inputs))[1])
         else:
-            output = model(*inputs)
-            if isinstance(output, tuple):
-                return tuple(o.clone() for o in output)
-            else:
-                return output.clone()  # .to(torch.float32)
+            output = model(*inputs).clone()
             # print("compiled:", timed(lambda: model(*inputs))[1])
     return output
 
@@ -86,10 +78,8 @@ def run_gnn_filter_optimized(
         with torch.autocast(
             device_type, dtype=dtype, enabled=auto_cast and check_autocast_support(device_type)
         ):
-            # GNN embeddings are calculated only once. Clone immediately to
-            # avoid returning views that can be overwritten when using
-            # CUDA graphs / torch.compile.
-            gnn_embedding = model.gnn(x, sorted_edge_index).clone()
+            # GNN embeddings are calculated only once
+            gnn_embedding = model.gnn(x, sorted_edge_index)
 
             # Process edges in batches to control memory
             for i in range(0, num_edges, batches):
@@ -104,7 +94,7 @@ def run_gnn_filter_optimized(
                 edge_features = torch.cat([source_nodes, target_nodes], dim=-1)
 
                 # 4. Run the filter network on the batch
-                scores_batch = model.net(edge_features).squeeze(-1).clone()
+                scores_batch = model.net(edge_features).squeeze(-1)
                 filter_scores.append(scores_batch)
 
                 # Explicitly free memory (optional, but can help in tight situations)

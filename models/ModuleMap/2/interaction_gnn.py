@@ -3,19 +3,20 @@ import importlib
 
 import torch
 import torch.nn as nn
-from torch.utils.checkpoint import checkpoint
+
 from torch_scatter import scatter_add, scatter_mean
 from torch_geometric.nn import SAGEConv
 
-
-class InteractionGNNParams:
+class InteractionGNNParams():
     """handel GNN paramerters"""
 
     params: Dict[str, bool]
 
     def __init__(self, hparams):
         super().__init__()
-        hparams["batchnorm"] = False if "batchnorm" not in hparams else hparams["batchnorm"]
+        hparams["batchnorm"] = (
+            False if "batchnorm" not in hparams else hparams["batchnorm"]
+        )
         hparams["output_batch_norm"] = hparams.get("output_batch_norm", False)
         hparams["edge_output_transform_final_batch_norm"] = hparams.get(
             "edge_output_transform_final_batch_norm", False
@@ -31,7 +32,9 @@ class InteractionGNNParams:
         self.params = {}
         self.params["checkpointing"] = hparams.get("checkpointing", False)
         self.params["concat"] = hparams.get("concat", True)
-        self.params["use_scatter_add"] = True if hparams.get("aggr", "sum") == "sum" else False
+        self.params["use_scatter_add"] = (
+            True if hparams.get("aggr", "sum") == "sum" else False
+        )
         self.n_graph_iters: int = hparams.get("n_graph_iters", 8)
         self.in_out_diff_agg: bool = hparams.get("in_out_diff_agg", True)
         self.ckpting_reentrant: bool = hparams.get("ckpting_reentrant", False)
@@ -173,6 +176,7 @@ def make_mlp(
     return nn.Sequential(*layers)
 
 
+
 class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
     """
     Interaction Network (L2IT version).
@@ -248,7 +252,9 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
         # Encode nodes and edges features into latent spaces
         x = checkpoint(self.node_encoder, x, use_reentrant=self.ckpting_reentrant)
         if edge_attr is not None:
-            e = checkpoint(self.edge_encoder, edge_attr, use_reentrant=self.ckpting_reentrant)
+            e = checkpoint(
+                self.edge_encoder, edge_attr, use_reentrant=self.ckpting_reentrant
+            )
         else:
             e = checkpoint(
                 self.edge_encoder,
@@ -265,8 +271,12 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
         # Loop over gnn layers
         for _ in range(self.n_graph_iters):
             if self.hparams["concat"]:
-                x = checkpoint(self.concat, x, input_x, use_reentrant=self.ckpting_reentrant)
-                e = checkpoint(self.concat, e, input_e, use_reentrant=self.ckpting_reentrant)
+                x = checkpoint(
+                    self.concat, x, input_x, use_reentrant=self.ckpting_reentrant
+                )
+                e = checkpoint(
+                    self.concat, e, input_e, use_reentrant=self.ckpting_reentrant
+                )
 
             x, e, out = checkpoint(
                 self.recurrent_message_step,
@@ -288,16 +298,16 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
 
         dst_index = torch.unsqueeze(dst, 0).tile(e_updated.shape[1], 1)
         edge_messages_from_src = torch.scatter_add(
-            torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device, dtype=e_updated.dtype),
+            torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device),
             1,
             dst_index,
             e_updated.T,
         ).T
         if not self.params["use_scatter_add"]:
             # use scatter_mean
-            e_ones = torch.ones(dst.shape[0], device=dst_index.device, dtype=e_updated.dtype)
+            e_ones = torch.ones(dst.shape[0], device=dst_index.device)
             count = torch.scatter_add(
-                torch.zeros(x.shape[0], device=dst_index.device, dtype=e_updated.dtype),
+                torch.zeros(x.shape[0], device=dst_index.device),
                 0,
                 dst,
                 e_ones,
@@ -307,16 +317,16 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
 
         src_index = torch.unsqueeze(src, 0).tile(e_updated.shape[1], 1)
         edge_messages_from_dst = torch.scatter_add(
-            torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device, dtype=e_updated.dtype),
+            torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device),
             1,
             src_index,
             e_updated.T,
         ).T
         if not self.params["use_scatter_add"]:
             # use scatter_mean
-            e_ones = torch.ones(dst.shape[0], device=dst_index.device, dtype=e_updated.dtype)
+            e_ones = torch.ones(dst.shape[0], device=dst_index.device)
             count = torch.scatter_add(
-                torch.zeros(x.shape[0], device=src_index.device, dtype=e_updated.dtype),
+                torch.zeros(x.shape[0], device=src_index.device),
                 0,
                 src,
                 e_ones,
@@ -356,34 +366,38 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
         super().__init__(hparams)
 
         # edge network
-        self.edge_network = nn.ModuleList([
-            make_mlp(
-                input_size=self.in_edge_net,
-                sizes=[hparams["hidden"]] * hparams["n_edge_net_layers"],
-                output_activation=hparams["output_activation"],
-                hidden_activation=hparams["hidden_activation"],
-                layer_norm=hparams["layernorm"],
-                batch_norm=hparams["batchnorm"],
-                output_batch_norm=hparams["output_batch_norm"],
-                track_running_stats=hparams["track_running_stats"],
-            )
-            for _ in range(hparams["n_graph_iters"])
-        ])
+        self.edge_network = nn.ModuleList(
+            [
+                make_mlp(
+                    input_size=self.in_edge_net,
+                    sizes=[hparams["hidden"]] * hparams["n_edge_net_layers"],
+                    output_activation=hparams["output_activation"],
+                    hidden_activation=hparams["hidden_activation"],
+                    layer_norm=hparams["layernorm"],
+                    batch_norm=hparams["batchnorm"],
+                    output_batch_norm=hparams["output_batch_norm"],
+                    track_running_stats=hparams["track_running_stats"],
+                )
+                for _ in range(hparams["n_graph_iters"])
+            ]
+        )
 
         # node network
-        self.node_network = nn.ModuleList([
-            make_mlp(
-                input_size=self.in_node_net,
-                sizes=[hparams["hidden"]] * hparams["n_node_net_layers"],
-                output_activation=hparams["output_activation"],
-                hidden_activation=hparams["hidden_activation"],
-                layer_norm=hparams["layernorm"],
-                batch_norm=hparams["batchnorm"],
-                output_batch_norm=hparams["output_batch_norm"],
-                track_running_stats=hparams["track_running_stats"],
-            )
-            for _ in range(hparams["n_graph_iters"])
-        ])
+        self.node_network = nn.ModuleList(
+            [
+                make_mlp(
+                    input_size=self.in_node_net,
+                    sizes=[hparams["hidden"]] * hparams["n_node_net_layers"],
+                    output_activation=hparams["output_activation"],
+                    hidden_activation=hparams["hidden_activation"],
+                    layer_norm=hparams["layernorm"],
+                    batch_norm=hparams["batchnorm"],
+                    output_batch_norm=hparams["output_batch_norm"],
+                    track_running_stats=hparams["track_running_stats"],
+                )
+                for _ in range(hparams["n_graph_iters"])
+            ]
+        )
 
     def forward_without_checkpoint(
         self,
@@ -411,16 +425,16 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
 
             dst_index = torch.unsqueeze(dst, 0).tile(e_updated.shape[1], 1)
             edge_messages_from_src = torch.scatter_add(
-                torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device, dtype=e_updated.dtype),
+                torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device),
                 1,
                 dst_index,
                 e_updated.T,
             ).T
             if not self.params["use_scatter_add"]:
                 # use scatter_mean
-                e_ones = torch.ones(dst.shape[0], device=dst_index.device, dtype=e_updated.dtype)
+                e_ones = torch.ones(dst.shape[0], device=dst_index.device)
                 count = torch.scatter_add(
-                    torch.zeros(x.shape[0], device=dst_index.device, dtype=e_updated.dtype),
+                    torch.zeros(x.shape[0], device=dst_index.device),
                     0,
                     dst,
                     e_ones,
@@ -430,16 +444,16 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
 
             src_index = torch.unsqueeze(src, 0).tile(e_updated.shape[1], 1)
             edge_messages_from_dst = torch.scatter_add(
-                torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device, dtype=e_updated.dtype),
+                torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device),
                 1,
                 src_index,
                 e_updated.T,
             ).T
             if not self.params["use_scatter_add"]:
                 # use scatter_mean
-                e_ones = torch.ones(dst.shape[0], device=dst_index.device, dtype=e_updated.dtype)
+                e_ones = torch.ones(dst.shape[0], device=dst_index.device)
                 count = torch.scatter_add(
-                    torch.zeros(x.shape[0], device=src_index.device, dtype=e_updated.dtype),
+                    torch.zeros(x.shape[0], device=src_index.device),
                     0,
                     src,
                     e_ones,
@@ -461,6 +475,7 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
 
         return outputs[-1].squeeze(-1)
 
+
     def message_step(
         self,
         x: torch.Tensor,
@@ -480,11 +495,19 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
 
         # Update nodes
         if self.params.get("aggr", "sum") != "sum":
-            edge_messages_from_src = scatter_mean(e_updated, dst, dim=0, dim_size=x.shape[0])
-            edge_messages_from_dst = scatter_mean(e_updated, src, dim=0, dim_size=x.shape[0])
+            edge_messages_from_src = scatter_mean(
+                e_updated, dst, dim=0, dim_size=x.shape[0]
+            )
+            edge_messages_from_dst = scatter_mean(
+                e_updated, src, dim=0, dim_size=x.shape[0]
+            )
         else:
-            edge_messages_from_src = scatter_add(e_updated, dst, dim=0, dim_size=x.shape[0])
-            edge_messages_from_dst = scatter_add(e_updated, src, dim=0, dim_size=x.shape[0])
+            edge_messages_from_src = scatter_add(
+                e_updated, dst, dim=0, dim_size=x.shape[0]
+            )
+            edge_messages_from_dst = scatter_add(
+                e_updated, src, dim=0, dim_size=x.shape[0]
+            )
         if self.in_out_diff_agg:
             node_inputs = torch.cat(
                 [edge_messages_from_src, edge_messages_from_dst, x], dim=-1
@@ -529,7 +552,9 @@ class GCNEncoderJitable(nn.Module):
 class GNNFilterJitable(nn.Module):
     def __init__(self, hparams):
         super().__init__()
-        hparams["batchnorm"] = False if "batchnorm" not in hparams else hparams["batchnorm"]
+        hparams["batchnorm"] = (
+            False if "batchnorm" not in hparams else hparams["batchnorm"]
+        )
         hparams["track_running_stats"] = hparams.get("track_running_stats", False)
 
         self.net = make_mlp(

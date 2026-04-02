@@ -19,19 +19,20 @@ while getopts "o:m:" opt; do
 done
 
 OUTPUTFILE="$(realpath $OUTPUTFILE)"
-
+if [ -n "$MODEL_NAME" ]; then
+  echo "Requested model: $MODEL_NAME"
+fi
 
 WORK_DIR="$(dirname "${BASH_SOURCE[0]}" )/../"
 WORK_DIR=$(readlink -f $WORK_DIR)
 TRITON_MODELS="${WORK_DIR}/models"
-TRITON_IMAGE="docker.io/alinutzal/tritonserver:latest"
+TRITON_IMAGE="docker.io/alinutzal/tritonserver:2026-01-13-pymmg"
 echo "Using Triton image: $TRITON_IMAGE"
 
 TRITON_JOBS_DIR="${WORK_DIR}/jobs"
 mkdir -p $TRITON_JOBS_DIR
 
 TRITON_LOG_VERBOSE=false
-
 
 TRITON_LOG_VERBOSE_FLAGS=""
 TRITON_SEVER_NAME="${SLURMD_NODENAME}"
@@ -54,6 +55,16 @@ then
     TRITON_LOG_VERBOSE_FLAGS="--log-verbose=3 --log-info=1 --log-warning=1 --log-error=1"
 fi
 
+TRITON_MODEL_FLAGS="--model-repository=/models"
+if [ -n "$MODEL_NAME" ]; then
+    TRITON_MODEL_FLAGS="${TRITON_MODEL_FLAGS} --model-control-mode=explicit --load-model=${MODEL_NAME}"
+    echo "Using explicit model load for: ${MODEL_NAME}"
+else
+    echo "No model provided; loading all models (implicit control mode)"
+fi
+# Reduce CUDA memory fragmentation for PyTorch (helps avoid OOMs)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 #Start Triton
 echo "[slurm] starting $TRITON_SEVER_NAME"
 podman-hpc run -it --rm --gpu --shm-size=20GB -p 8002:8002 -p 8001:8001 -p 8000:8000 \
@@ -64,4 +75,4 @@ podman-hpc run -it --rm --gpu --shm-size=20GB -p 8002:8002 -p 8001:8001 -p 8000:
         $TRITON_MODEL_FLAGS \
         --allow-metrics=true \
         $TRITON_LOG_VERBOSE_FLAGS  2>&1 \
-        | tee $TRITON_JOBS_DIR/$TRITON_SEVER_NAME.log
+    | tee $TRITON_JOBS_DIR/$TRITON_SEVER_NAME.log

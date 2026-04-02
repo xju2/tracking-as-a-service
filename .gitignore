@@ -169,3 +169,5 @@ jobs/
 *.qdstrm
 *.ipynb_checkpoints
 *.pt
+
+/torch_compile_debug/*

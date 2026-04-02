@@ -288,16 +288,16 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
 
         dst_index = torch.unsqueeze(dst, 0).tile(e_updated.shape[1], 1)
         edge_messages_from_src = torch.scatter_add(
-            torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device),
+            torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device, dtype=e_updated.dtype),
             1,
             dst_index,
             e_updated.T,
         ).T
         if not self.params["use_scatter_add"]:
             # use scatter_mean
-            e_ones = torch.ones(dst.shape[0], device=dst_index.device)
+            e_ones = torch.ones(dst.shape[0], device=dst_index.device, dtype=e_updated.dtype)
             count = torch.scatter_add(
-                torch.zeros(x.shape[0], device=dst_index.device),
+                torch.zeros(x.shape[0], device=dst_index.device, dtype=e_updated.dtype),
                 0,
                 dst,
                 e_ones,
@@ -307,16 +307,16 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
 
         src_index = torch.unsqueeze(src, 0).tile(e_updated.shape[1], 1)
         edge_messages_from_dst = torch.scatter_add(
-            torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device),
+            torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device, dtype=e_updated.dtype),
             1,
             src_index,
             e_updated.T,
         ).T
         if not self.params["use_scatter_add"]:
             # use scatter_mean
-            e_ones = torch.ones(dst.shape[0], device=dst_index.device)
+            e_ones = torch.ones(dst.shape[0], device=dst_index.device, dtype=e_updated.dtype)
             count = torch.scatter_add(
-                torch.zeros(x.shape[0], device=src_index.device),
+                torch.zeros(x.shape[0], device=src_index.device, dtype=e_updated.dtype),
                 0,
                 src,
                 e_ones,
@@ -411,16 +411,16 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
 
             dst_index = torch.unsqueeze(dst, 0).tile(e_updated.shape[1], 1)
             edge_messages_from_src = torch.scatter_add(
-                torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device),
+                torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device, dtype=e_updated.dtype),
                 1,
                 dst_index,
                 e_updated.T,
             ).T
             if not self.params["use_scatter_add"]:
                 # use scatter_mean
-                e_ones = torch.ones(dst.shape[0], device=dst_index.device)
+                e_ones = torch.ones(dst.shape[0], device=dst_index.device, dtype=e_updated.dtype)
                 count = torch.scatter_add(
-                    torch.zeros(x.shape[0], device=dst_index.device),
+                    torch.zeros(x.shape[0], device=dst_index.device, dtype=e_updated.dtype),
                     0,
                     dst,
                     e_ones,
@@ -430,16 +430,16 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
 
             src_index = torch.unsqueeze(src, 0).tile(e_updated.shape[1], 1)
             edge_messages_from_dst = torch.scatter_add(
-                torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device),
+                torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device, dtype=e_updated.dtype),
                 1,
                 src_index,
                 e_updated.T,
             ).T
             if not self.params["use_scatter_add"]:
                 # use scatter_mean
-                e_ones = torch.ones(dst.shape[0], device=dst_index.device)
+                e_ones = torch.ones(dst.shape[0], device=dst_index.device, dtype=e_updated.dtype)
                 count = torch.scatter_add(
-                    torch.zeros(x.shape[0], device=src_index.device),
+                    torch.zeros(x.shape[0], device=src_index.device, dtype=e_updated.dtype),
                     0,
                     src,
                     e_ones,

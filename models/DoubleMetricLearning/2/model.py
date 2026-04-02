@@ -37,7 +37,8 @@ class TritonPythonModel:
         """
         # You must parse model_config. JSON string is not parsed here
         self.model_config = model_config = json.loads(args["model_config"])
-        self.model_instance_device_id = json.loads(args["model_instance_device_id"])
+        device_id = int(args["model_instance_device_id"])
+        self.model_instance_device_id = device_id
 
         parameters = model_config["parameters"]
         self.debug = False
@@ -51,7 +52,12 @@ class TritonPythonModel:
 
         self.save_event = get_parameter("save_event").lower() == "true"
         model_path = Path(args["model_repository"]) / args["model_version"]
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # --- IMPORTANT: bind this model instance to its GPU ---
+        if torch.cuda.is_available():
+            torch.cuda.set_device(device_id)
+            device = f"cuda:{device_id}"
+        else:
+            device = "cpu"
         auto_cast = get_parameter("auto_cast").lower() == "true"
         compiling = get_parameter("compiling").lower() == "true"
         config = MetricLearningInferenceConfig(

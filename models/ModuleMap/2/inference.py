@@ -1,78 +1,46 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from pathlib import Path
+from operator import itemgetter
 
-import fastwalkthrough as walkutils
-import frnn
+import networkx as nx
 import numpy as np
 import torch
-from double_metric_learning import DoubleMetricLearning
-from interaction_gnn import (
-    ChainedInteractionGNN2,
-    GNNFilterJitable,
-    RecurrentInteractionGNN2,
-)
 from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
-from torch_model_inference import run_gnn_filter, run_torch_model
+from torch_geometric.utils import to_networkx
+import torch.cuda.nvtx as nvtx
+
+from module_map_graph import build_graph
+from torch_model_inference import run_torch_model
+import fastwalkthrough as walkutils
+import time
+
+
+from interaction_gnn import (
+    RecurrentInteractionGNN2,
+    ChainedInteractionGNN2,
+    GNNFilterJitable,
+)
 
 torch.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 
 
-def to_trk_tensor(trk, device):
-    # Convert numba.typed.List or Python list -> numpy
-    if not isinstance(trk, np.ndarray):
-        trk = np.array(trk, dtype=np.int64)
-    else:
-        trk = trk.astype(np.int64, copy=False)
-
-    # Finally -> torch tensor on correct device
-    return torch.as_tensor(trk, dtype=torch.long, device=device)
-
-
-def build_edges(
-    query: torch.Tensor,
-    database: torch.Tensor,
-    r_max: float = 0.1,
-    k_max: int = 1000,
-) -> torch.Tensor:
-    # Compute edges
-    _, idxs, _, _ = frnn.frnn_grid_points(
-        points1=query.unsqueeze(0),
-        points2=database.unsqueeze(0),
-        lengths1=None,
-        lengths2=None,
-        K=k_max,
-        r=r_max,
-        grid=None,
-        return_nn=False,
-        return_sorted=True,
-    )
-
-    idxs: torch.Tensor = idxs.squeeze().int()
-    ind = torch.arange(idxs.shape[0], device=query.device).repeat(idxs.shape[1], 1).T.int()
-    positive_idxs = idxs >= 0
-    edge_list = torch.stack([ind[positive_idxs], idxs[positive_idxs]]).long()
-
-    # Remove self-loops
-    edge_list = edge_list[:, edge_list[0] != edge_list[1]]
-    return edge_list
-
-
 @dataclass
-class MetricLearningInferenceConfig:
+class ModuleMapInferenceConfig:
     model_path: str | Path
+    module_map_pattern_path: str | Path
     device: str
     auto_cast: bool
     compiling: bool
     debug: bool
+    device_id: int = 0
     save_debug_data: bool = False
-    r_max: float = 0.14
+    r_max: float = 0.12
     k_max: int = 1000
-    filter_cut: float = 0.01
+    filter_cut: float = 0.05
     filter_batches: int = 10
     cc_cut: float = 0.01
     walk_min: float = 0.1
@@ -102,44 +70,25 @@ class MetricLearningInferenceConfig:
         self.model_path = (
             Path(self.model_path) if isinstance(self.model_path, str) else self.model_path
         )
-
-
-class MetricLearningInference:
-    def __init__(self, config: MetricLearningInferenceConfig):
-        self.config = config
-        print(self.config)
-        model_path = (
-            Path(self.config.model_path)
-            if not isinstance(self.config.model_path, Path)
-            else self.config.model_path
+        self.module_map_pattern_path = (
+            Path(self.module_map_pattern_path)
+            if isinstance(self.module_map_pattern_path, str)
+            else self.module_map_pattern_path
         )
 
-        # Load checkpoints instead of .pt files
-        # Find checkpoint directory
-        embedding_path = model_path / "embedding.ckpt"
-        filtering_path = model_path / "filter.ckpt"
-        gnn_path = model_path / "gnn.ckpt"
+
+class ModuleMapInference:
+    def __init__(self, config: ModuleMapInferenceConfig):
+        self.config = config
+        print(self.config)
+        self.device = self.config.device
+
+        print("Path: ", self.config.module_map_pattern_path)
+        self.module_map_path = str(self.config.module_map_pattern_path)
+
+        gnn_path = Path(__file__).parent / "MM_meanrms_trained_IGNN2_L2IT_scaillou_best--val_loss=0.003805-epoch=397(1).ckpt"
 
         # load the checkpoint
-
-        print(f"Loading checkpoint from {embedding_path}")
-        checkpoint = torch.load(embedding_path, map_location="cpu")
-        self.embedding_model = DoubleMetricLearning(checkpoint["hyper_parameters"])
-        # print("JAYYYY", checkpoint["state_dict"].keys())
-        keys = list(checkpoint["state_dict"].keys())
-        for key in keys:
-            if "src_network" in key or "tgt_network" in key:
-                checkpoint["state_dict"].pop(key)
-        self.embedding_model.load_state_dict(checkpoint["state_dict"])
-        self.embedding_model.to(self.config.device).eval()
-
-        print(f"Loading checkpoint from {filtering_path}")
-        checkpoint = torch.load(filtering_path, map_location="cpu")
-        new_model = GNNFilterJitable(checkpoint["hyper_parameters"])
-        new_model.load_state_dict(checkpoint["state_dict"])
-        self.filter_model = new_model
-        self.filter_model.to(self.config.device).eval()
-
         print(f"Loading checkpoint from {gnn_path}")
         checkpoint = torch.load(gnn_path, map_location="cpu")
         model_config = checkpoint["hyper_parameters"]
@@ -158,77 +107,28 @@ class MetricLearningInference:
         new_gnn.load_state_dict(state_dict)
 
         self.gnn_model = new_gnn
-        self.gnn_model.to(self.config.device).eval()
-
-        device = self.config.device
-        self.embedding_scale = torch.tensor(config.embedding_node_scale, device=device)
-        self.filter_scale = torch.tensor(config.filter_node_scale, device=device)
-        self.gnn_scale = torch.tensor(config.gnn_node_scale, device=device)
+        self.gnn_model.to(self.device).eval()
 
         if self.config.compiling:
-            print("compiling models works now...")
-            torch.set_float32_matmul_precision("high")
-            # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
-            self.embedding_model = torch.compile(
-                self.embedding_model, dynamic=True, mode="max-autotune"
-            )
-            # # Compile GNNFilter
-            self.filter_model.gnn = torch.compile(
-                self.filter_model.gnn, dynamic=True, mode="max-autotune"
-            )
-            self.filter_model.net = torch.compile(
-                self.filter_model.net, dynamic=True, mode="max-autotune"
-            )
             # # Compile interaction gnn
             self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
-            # self.embedding_model.eval()
-            # self.filter_model.eval()
-            # self.gnn_model.eval()
 
         self.input_node_features = [
+            "x",
+            "y",
+            "z",
+            "module_id",
+            "hit_id",
             "r",
             "phi",
-            "z",
-            "cluster_x_1",
-            "cluster_y_1",
-            "cluster_z_1",
-            "cluster_x_2",
-            "cluster_y_2",
-            "cluster_z_2",
-            "count_1",
-            "charge_count_1",
-            "loc_eta_1",
-            "loc_phi_1",
-            "localDir0_1",
-            "localDir1_1",
-            "localDir2_1",
-            "lengthDir0_1",
-            "lengthDir1_1",
-            "lengthDir2_1",
-            "glob_eta_1",
-            "glob_phi_1",
-            "eta_angle_1",
-            "phi_angle_1",
-            "count_2",
-            "charge_count_2",
-            "loc_eta_2",
-            "loc_phi_2",
-            "localDir0_2",
-            "localDir1_2",
-            "localDir2_2",
-            "lengthDir0_2",
-            "lengthDir1_2",
-            "lengthDir2_2",
-            "glob_eta_2",
-            "glob_phi_2",
-            "eta_angle_2",
-            "phi_angle_2",
             "eta",
             "cluster_r_1",
             "cluster_phi_1",
+            "cluster_z_1",
             "cluster_eta_1",
             "cluster_r_2",
             "cluster_phi_2",
+            "cluster_z_2",
             "cluster_eta_2",
         ]
 
@@ -236,8 +136,10 @@ class MetricLearningInference:
         self,
         node_features: torch.Tensor,
         hit_id: torch.Tensor | None = None,
+        nvtx_enabled: bool = False,
     ):
         device = self.config.device
+        debug = self.config.debug
 
         track_candidates = np.array([-1], dtype=np.int64)
         if node_features is None or node_features.shape[0] < 3:
@@ -249,62 +151,56 @@ class MetricLearningInference:
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=device)
 
-        embedding_inputs = node_features[
-            :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
-        ]
-        embedding_inputs /= self.embedding_scale
+        if nvtx_enabled:
+            nvtx.range_push("MM Inference one event")
 
-        src_embedding, tgt_embedding = run_torch_model(
-            self.embedding_model, self.config.auto_cast, embedding_inputs
+        # Build edges
+        if nvtx_enabled:
+            nvtx.range_push("Build Edges")
+
+        # Create a graph object with hit data for build_graph
+        from dataclasses import dataclass as dc
+
+        @dc
+        class GraphData:
+            hit_id: torch.Tensor
+            hit_module_id: torch.Tensor
+            hit_x: torch.Tensor
+            hit_y: torch.Tensor
+            hit_z: torch.Tensor
+            edge_index: torch.Tensor = None
+
+        graph = GraphData(
+            hit_id=hit_id,
+            hit_module_id=node_features[:, self.input_node_features.index("module_id")],
+            hit_x=node_features[:, self.input_node_features.index("x")],
+            hit_y=node_features[:, self.input_node_features.index("y")],
+            hit_z=node_features[:, self.input_node_features.index("z")],
         )
 
-        # delete the embedding inputs if not needed.
-        if self.config.filter_node_features == self.config.embedding_node_features:
-            filtering_inputs = embedding_inputs
-        else:
-            del embedding_inputs
-            filtering_inputs = node_features[
-                :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
-            ]
-            filtering_inputs /= self.filter_scale
-
-        edge_index = build_edges(
-            src_embedding, tgt_embedding, r_max=self.config.r_max, k_max=self.config.k_max
+        edge_index = build_graph(
+            graph,
+            module_map_path=self.module_map_path,
+            device=self.config.device_id,
         )
 
-        if edge_index.shape[1] < 2:
-            return track_candidates
+        # Move edge_index to the same device as model
+        edge_index = edge_index.to(device)
+
+        if debug:
+            print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
 
         # order the edges by their distance from the collision point.
         R = (
             node_features[:, self.input_node_features.index("r")] ** 2
             + node_features[:, self.input_node_features.index("z")] ** 2
         )
-        edge_flip_mask = (R[edge_index[0]] > R[edge_index[1]]) | (
-            (R[edge_index[0]] == R[edge_index[1]]) & (edge_index[0] > edge_index[1])
-        )
-        edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
-        edge_index = torch.unique(edge_index, dim=-1)
 
-        edge_scores, edge_index, _ = run_gnn_filter(
-            model=self.filter_model,
-            auto_cast=self.config.auto_cast,
-            batches=self.config.filter_batches,
-            x=filtering_inputs,
-            edge_index=edge_index,
-        )
-
-        # apply fitlering score cuts.
-        edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
-        # del edge_scores
-        if edge_index.shape[1] < 2:
-            return track_candidates
-
-        # prepare GNN inputs
         gnn_input = node_features[
             :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
         ]
-        gnn_input /= self.gnn_scale
+
+        gnn_input /= torch.tensor(self.config.gnn_node_scale, device=device).float()
 
         def reset_angle(angles):
             angles[angles > torch.pi] -= 2 * torch.pi
@@ -339,9 +235,20 @@ class MetricLearningInference:
             )
             r_avg = (r[dst] + r[src]) / 2.0
             rphislope = torch.nan_to_num(torch.multiply(r_avg, phislope), nan=0.0)
-            return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
+            return {
+                "dr": dr,
+                "dphi": dphi,
+                "dz": dz,
+                "deta": deta,
+                "phislope": phislope,
+                "rphislope": rphislope,
+            }
 
-        edge_features = calculate_edge_features().to(device).float()
+        edge_features_dict = calculate_edge_features()
+        edge_features = torch.stack(list(edge_features_dict.values()), dim=1)
+
+        if nvtx_enabled:
+            nvtx.range_push("GNN Inference")
 
         edge_scores = (
             run_torch_model(
@@ -350,6 +257,12 @@ class MetricLearningInference:
             .sigmoid()
             .to(torch.float32)
         )
+        torch.cuda.synchronize()
+        if nvtx_enabled:
+            nvtx.range_pop()
+        torch.cuda.synchronize()
+        if nvtx_enabled:
+            nvtx.range_pop()
 
         good_edge_mask = edge_scores > self.config.cc_cut
         edge_index = edge_index[:, good_edge_mask]
@@ -358,7 +271,7 @@ class MetricLearningInference:
 
         score_name = "edge_scores"
         graph = Data(
-            # R=R,
+            R=R,
             edge_index=edge_index,
             hit_id=hit_id,
             num_nodes=node_features.shape[0],
@@ -368,9 +281,19 @@ class MetricLearningInference:
 
         all_trkx = {}
         all_trkx["cc"], graph = walkutils.get_simple_path(graph)
+        if debug:
+            print("the graph information")
+            # with open("graph_info.txt", "w") as f:
+            #     f.write(f"{G.nodes(data=True)}\n")
+            #     f.write(f"{G.edges(data=True)}\n")
         all_trkx["walk"] = walkutils.walk_through(
             graph, score_name, self.config.walk_min, self.config.walk_max, False
         )
+        if debug:
+            print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
+            print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
+        if nvtx_enabled:
+            nvtx.range_pop()
 
         tracks = all_trkx["cc"] + list(all_trkx["walk"])
         total_length = sum(len(trk) + 1 for trk in tracks)
@@ -378,7 +301,7 @@ class MetricLearningInference:
 
         i = 0
         for trk in tracks:
-            trk_tensor = to_trk_tensor(trk, device)
+            trk_tensor = torch.tensor(trk, device=R.device)
             sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
 
             n = len(sorted_trk)
@@ -393,29 +316,34 @@ class MetricLearningInference:
         self,
         node_features: torch.Tensor,
         hit_id: torch.Tensor | None = None,
+        nvtx_enabled: bool = False,
     ):
-        return self.forward(node_features, hit_id=hit_id)
+        return self.forward(node_features, hit_id=hit_id, nvtx_enabled=nvtx_enabled)
 
 
-def create_metric_learning_end2end_rel24(
+def create_module_map_end2end_rel24(
     model_path: str,
+    module_map_pattern_path: str,
     device: str,
+    device_id: int,
     debug: bool,
     precision: str,
     auto_cast: bool,
     compiling: bool,
     save_data_for_debug: bool,
 ):
-    config = MetricLearningInferenceConfig(
+    config = ModuleMapInferenceConfig(
         model_path=model_path,
+        module_map_pattern_path=module_map_pattern_path,
         device=device,
+        device_id=device_id,
         auto_cast=auto_cast,
         compiling=compiling,
         debug=debug,
         save_debug_data=save_data_for_debug,
-        r_max=0.14,
+        r_max=0.12,
         k_max=1000,
-        filter_cut=0.01,
+        filter_cut=0.05,
         filter_batches=10,
         cc_cut=0.01,
         walk_min=0.1,
@@ -429,16 +357,19 @@ def create_metric_learning_end2end_rel24(
     )
 
     torch.set_float32_matmul_precision(precision)
-    model = MetricLearningInference(config)
+    model = ModuleMapInference(config)
     return model
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Inference for Metric Learning")
+    parser = argparse.ArgumentParser(description="Inference for ModuleMap pipeline")
     parser.add_argument("-i", "--input", type=str, default="node_features.pt", help="Input file")
-    parser.add_argument("-m", "--model", type=str, default="../3", help="Model path")
+    parser.add_argument("-m", "--model", type=str, default="./", help="Model path")
+    parser.add_argument(
+        "-mmp", "--module_map_pattern_path", type=str, default="./", help="Module map pattern path"
+    )
     parser.add_argument("-p", "--precision", type=str, default="highest", help="Precision")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")
@@ -450,12 +381,12 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-    if not Path(args.model).exists():
-        raise FileNotFoundError(f"Model path {args.model} does not exist.")
 
-    inference = create_metric_learning_end2end_rel24(
+    inference = create_module_map_end2end_rel24(
         model_path=args.model,
+        module_map_pattern_path=args.module_map_pattern_path,
         device=args.device,
+        device_id=0,
         debug=args.verbose,
         precision=args.precision,
         auto_cast=args.auto_cast,
@@ -469,16 +400,14 @@ if __name__ == "__main__":
     # time the inference function.
     if args.timing:
         import time
-
         from tqdm import tqdm
 
         start_time = time.time()
         num_trials = 10
         print(">>> Starting NSYS-captured inference")
         nvtx.range_push("Inference_Loop")
-        for _ in range(num_trials):  # tqdm(range(num_trials)):
+        for _ in tqdm(range(num_trials)):
             track_ids = inference(node_features, nvtx_enabled=True)
-            # print("time for one inference:", timed(lambda: inference(node_features))[1])
         nvtx.range_pop()
-        # print("average time per event", (time.time() - start_time) / num_trials)
+        print("average time per event", (time.time() - start_time) / num_trials)
     print("total tracks", np.sum(track_ids == -1))
