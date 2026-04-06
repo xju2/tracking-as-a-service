@@ -96,7 +96,11 @@ def build_edges(
     # Remove self-loops
     edge_list = edge_list[:, edge_list[0] != edge_list[1]]
 
-    return (edge_list, dists, idxs, ind) if (return_indices and backend == "FRNN") else edge_list
+    return (
+        (edge_list, dists, idxs, ind)
+        if (return_indices and backend == "FRNN" and FRNN_AVAILABLE)
+        else edge_list
+    )
 
 
 def graph_intersection(
