@@ -1,4 +1,4 @@
-name: "DoubleMetricLearning"
+name: "DoubleMetricLearningDPW"
 backend: "python"
 
 input [
