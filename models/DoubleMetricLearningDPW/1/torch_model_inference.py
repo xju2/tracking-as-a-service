@@ -4,8 +4,20 @@ from torch_geometric.utils import sort_edge_index
 dtype = torch.float16
 
 
+def _torch_version_tuple():
+    base_version = torch.__version__.split("+", 1)[0]
+    parts = base_version.split(".")
+    normalized_parts = []
+    for part in parts[:3]:
+        numeric = "".join(ch for ch in part if ch.isdigit())
+        normalized_parts.append(int(numeric) if numeric else 0)
+    while len(normalized_parts) < 3:
+        normalized_parts.append(0)
+    return tuple(normalized_parts)
+
+
 def check_autocast_support(device_type: str):
-    if torch.__version__ < "2.4.0":
+    if _torch_version_tuple() < (2, 4, 0):
         return device_type == "cuda"
     return torch.amp.autocast_mode.is_autocast_available(device_type)
 
