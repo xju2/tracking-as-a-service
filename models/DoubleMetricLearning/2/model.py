@@ -54,12 +54,14 @@ class TritonPythonModel:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         auto_cast = get_parameter("auto_cast").lower() == "true"
         compiling = get_parameter("compiling").lower() == "true"
+        use_dpw = parameters.get("use_dpw", {"string_value": "False"})["string_value"].lower() == "true"
         config = MetricLearningInferenceConfig(
             model_path=model_path,
             device=device,
             auto_cast=auto_cast,
             compiling=compiling,
             debug=self.debug,
+            use_dpw=use_dpw,
             save_debug_data=self.save_event,
         )
 

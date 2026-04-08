@@ -7,6 +7,78 @@ from torch_geometric.utils import to_scipy_sparse_matrix
 from torch_scatter import scatter_max
 
 
+def get_simple_path(graph: Data, score_name: str, threshold: float):
+    graph = filter_graph(graph, score_name, threshold)
+    graph = remove_cycles(graph)
+    labels, _ = compute_component_labels(graph)
+    graph.labels = labels
+
+    _, inverse, counts = torch.unique(labels, return_inverse=True, return_counts=True)
+    large_component_mask = counts[inverse] >= 3
+
+    simple_path_mask, subgraph_rest = process_components(graph, labels, large_component_mask)
+    simple_path_lists = labels_to_lists(
+        labels[simple_path_mask],
+        graph.hit_id[simple_path_mask],
+    )
+    return [track.tolist() for track in simple_path_lists], subgraph_rest
+
+
+def process_components(
+    graph: Data,
+    labels: torch.Tensor,
+    large_component_mask: torch.Tensor,
+) -> tuple[torch.Tensor, Data]:
+    in_degrees = torch.bincount(graph.edge_index[1], minlength=graph.num_nodes)
+    out_degrees = torch.bincount(graph.edge_index[0], minlength=graph.num_nodes)
+
+    bad_nodes = torch.maximum(in_degrees, out_degrees) > 1
+    bad_components = scatter_max(bad_nodes.to(torch.int32), labels, dim=0)[0].bool()
+    simple_path_components = ~bad_components
+
+    simple_path_mask = simple_path_components[labels]
+    large_component_simple_path_mask = simple_path_mask & large_component_mask
+    large_component_complex_path_mask = ~simple_path_mask & large_component_mask
+
+    subgraph_complex_paths = graph.subgraph(large_component_complex_path_mask)
+    return large_component_simple_path_mask, subgraph_complex_paths
+
+
+def labels_to_lists(labels: torch.Tensor, hit_ids: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    if labels.numel() == 0:
+        return ()
+
+    _, counts = torch.unique(labels, return_counts=True)
+    grouped_order = torch.argsort(labels, stable=True)
+    grouped_hit_ids = hit_ids[grouped_order]
+    return torch.split(grouped_hit_ids, counts.tolist())
+
+
+def filter_graph(graph: Data, score_name: str, threshold: float) -> Data:
+    mask = graph[score_name] > threshold
+    edge_index = graph.edge_index[:, mask]
+    edge_scores = graph[score_name][mask].float()
+
+    new_graph = Data(
+        edge_index=edge_index,
+        hit_id=graph.hit_id,
+        num_nodes=graph.num_nodes,
+        R=graph.R,
+    )
+    new_graph[score_name] = edge_scores
+    return RemoveIsolatedNodes()(new_graph)
+
+
+def remove_cycles(graph: Data) -> Data:
+    radial_distance = graph.R
+    edge_flip_mask = (radial_distance[graph.edge_index[0]] > radial_distance[graph.edge_index[1]]) | (
+        (radial_distance[graph.edge_index[0]] == radial_distance[graph.edge_index[1]])
+        & (graph.edge_index[0] > graph.edge_index[1])
+    )
+    graph.edge_index[:, edge_flip_mask] = graph.edge_index[:, edge_flip_mask].flip(0)
+    return graph
+
+
 def dp_walk_through(
     graph: Data,
     score_name: str,
