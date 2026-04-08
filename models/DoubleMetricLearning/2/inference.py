@@ -483,9 +483,13 @@ class MetricLearningInference:
 
         all_trkx = {}
         if self.config.use_dpw:
-            all_trkx["cc"], graph = get_dpw_simple_path(graph, score_name, self.config.cc_cut)
+            cpu_graph = graph.cpu()
+            cpu_R = R.cpu()
+            all_trkx["cc"], cpu_graph = get_dpw_simple_path(
+                cpu_graph, score_name, self.config.cc_cut
+            )
             all_trkx["walk"] = dp_walk_through(
-                graph,
+                cpu_graph,
                 score_name,
                 self.config.walk_min,
                 self.config.walk_max,
@@ -520,8 +524,10 @@ class MetricLearningInference:
             track_candidates[i : i + n] = sorted_trk.cpu().tolist()
             i += n
             track_candidates[i] = -1
-            i += 1
-
+                trk_device = "cpu" if self.config.use_dpw else device
+                track_r = cpu_R if self.config.use_dpw else R
+                trk_tensor = to_trk_tensor(trk, trk_device)
+                sorted_trk = trk_tensor[torch.argsort(track_r[trk_tensor])]
         # write candidates to a file.
         if debug:
             print("track_candidates", track_candidates[:20])
