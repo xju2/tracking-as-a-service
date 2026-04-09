@@ -12,6 +12,7 @@ from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
 from torch_geometric.utils import to_networkx
 import torch.cuda.nvtx as nvtx
+from dp_walkthrough import dp_walk_through, get_simple_path as get_dpw_simple_path
 
 from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
 import fastwalkthrough as walkutils
@@ -77,6 +78,7 @@ class MetricLearningInferenceConfig:
     auto_cast: bool
     compiling: bool
     debug: bool
+    use_dpw: bool = False
     save_debug_data: bool = False
     r_max: float = 0.14
     k_max: int = 1000
@@ -242,6 +244,7 @@ class MetricLearningInference:
         nvtx_enabled: bool = False,
     ):
         device = self.config.device
+        use_nvtx = nvtx_enabled and torch.cuda.is_available() and str(device).startswith("cuda")
         debug = self.config.debug
         save_debug_data = self.config.save_debug_data
         out_debug_data_name = "debug_data.pt"
@@ -256,11 +259,11 @@ class MetricLearningInference:
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=device)
 
-        if nvtx_enabled:
+        if use_nvtx:
             nvtx.range_push("ML Inference one event")
 
         # Metric Learning
-        if nvtx_enabled:
+        if use_nvtx:
             nvtx.range_push("Metric Learning Inference")
 
         embedding_inputs = node_features[
@@ -273,8 +276,8 @@ class MetricLearningInference:
         src_embedding, tgt_embedding = run_torch_model(
             self.embedding_model, self.config.auto_cast, embedding_inputs
         )
-        torch.cuda.synchronize()
-        if nvtx_enabled:
+        if use_nvtx:
+            torch.cuda.synchronize()
             nvtx.range_pop()
         # torch.cuda.synchronize()
         # print(f"run_torch_model (embedding) time: {time.time() - t0:.4f} s")
@@ -307,7 +310,7 @@ class MetricLearningInference:
             out_data.filtering_nodes = filtering_inputs
 
         # Build edges
-        if nvtx_enabled:
+        if use_nvtx:
             nvtx.range_push("Build Edges")
         # torch.cuda.synchronize()
         # t0 = time.time()
@@ -315,8 +318,8 @@ class MetricLearningInference:
         edge_index = build_edges(
             src_embedding, tgt_embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
-        torch.cuda.synchronize()
-        if nvtx_enabled:
+        if use_nvtx:
+            torch.cuda.synchronize()
             nvtx.range_pop()
 
         if save_debug_data:
@@ -325,6 +328,8 @@ class MetricLearningInference:
         if edge_index.shape[1] < 2:
             if save_debug_data:
                 torch.save(out_data, out_debug_data_name)
+            if use_nvtx:
+                nvtx.range_pop()
             return track_candidates
 
         # order the edges by their distance from the collision point.
@@ -345,7 +350,7 @@ class MetricLearningInference:
             out_data.filter_edge_list_before = edge_index
 
         # GNNFiltering
-        if nvtx_enabled:
+        if use_nvtx:
             nvtx.range_push("GNN Filtering")
         # torch.cuda.synchronize()
         # t0 = time.time()
@@ -356,8 +361,8 @@ class MetricLearningInference:
             filtering_inputs,
             edge_index,
         )
-        torch.cuda.synchronize()
-        if nvtx_enabled:
+        if use_nvtx:
+            torch.cuda.synchronize()
             nvtx.range_pop()
         # torch.cuda.synchronize()
         # print(f"run_torch_model (filtering) time: {time.time() - t0:.4f} s")
@@ -375,11 +380,12 @@ class MetricLearningInference:
         edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
         # del edge_scores
         if edge_index.shape[1] < 2:
+            if use_nvtx:
+                nvtx.range_pop()
             return track_candidates
 
         if debug:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
-        torch.cuda.synchronize()
         # prepare GNN inputs
         gnn_input = node_features[
             :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
@@ -434,7 +440,7 @@ class MetricLearningInference:
 
         # torch.cuda.synchronize()
         # t0 = time.time()
-        if nvtx_enabled:
+        if use_nvtx:
             nvtx.range_push("GNN Inference")
         edge_scores = (
             run_torch_model(
@@ -443,11 +449,8 @@ class MetricLearningInference:
             .sigmoid()
             .to(torch.float32)
         )
-        torch.cuda.synchronize()
-        if nvtx_enabled:
-            nvtx.range_pop()
-        torch.cuda.synchronize()
-        if nvtx_enabled:
+        if use_nvtx:
+            torch.cuda.synchronize()
             nvtx.range_pop()
         # print(f"run_torch_model (GNN) time: {time.time() - t0:.4f} s")
 
@@ -479,19 +482,33 @@ class MetricLearningInference:
         graph = RemoveIsolatedNodes()(graph)
 
         all_trkx = {}
-        all_trkx["cc"], graph = walkutils.get_simple_path(graph)
+        if self.config.use_dpw:
+            cpu_graph = graph.cpu()
+            cpu_R = R.cpu()
+            all_trkx["cc"], cpu_graph = get_dpw_simple_path(
+                cpu_graph, score_name, self.config.cc_cut
+            )
+            all_trkx["walk"] = dp_walk_through(
+                cpu_graph,
+                score_name,
+                self.config.walk_min,
+                self.config.walk_max,
+                "score_weighted_length",
+            )
+        else:
+            all_trkx["cc"], graph = walkutils.get_simple_path(graph)
+            all_trkx["walk"] = walkutils.walk_through(
+                graph, score_name, self.config.walk_min, self.config.walk_max, False
+            )
         if debug:
             print("the graph information")
             # with open("graph_info.txt", "w") as f:
             #     f.write(f"{G.nodes(data=True)}\n")
             #     f.write(f"{G.edges(data=True)}\n")
-        all_trkx["walk"] = walkutils.walk_through(
-            graph, score_name, self.config.walk_min, self.config.walk_max, False
-        )
         if debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
             print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
-        if nvtx_enabled:
+        if use_nvtx:
             nvtx.range_pop()
 
         tracks = all_trkx["cc"] + list(all_trkx["walk"])
@@ -507,8 +524,10 @@ class MetricLearningInference:
             track_candidates[i : i + n] = sorted_trk.cpu().tolist()
             i += n
             track_candidates[i] = -1
-            i += 1
-
+                trk_device = "cpu" if self.config.use_dpw else device
+                track_r = cpu_R if self.config.use_dpw else R
+                trk_tensor = to_trk_tensor(trk, trk_device)
+                sorted_trk = trk_tensor[torch.argsort(track_r[trk_tensor])]
         # write candidates to a file.
         if debug:
             print("track_candidates", track_candidates[:20])
@@ -534,6 +553,7 @@ def create_metric_learning_end2end_rel24(
     precision: str,
     auto_cast: bool,
     compiling: bool,
+    use_dpw: bool,
     save_data_for_debug: bool,
 ):
     config = MetricLearningInferenceConfig(
@@ -542,6 +562,7 @@ def create_metric_learning_end2end_rel24(
         auto_cast=auto_cast,
         compiling=compiling,
         debug=debug,
+        use_dpw=use_dpw,
         save_debug_data=save_data_for_debug,
         r_max=0.14,
         k_max=1000,
@@ -575,6 +596,7 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--device", default="cuda", help="Device")
     parser.add_argument("-t", "--timing", action="store_true", help="Time the inference")
     parser.add_argument("-c", "--compiling", action="store_true", help="Use compiling")
+    parser.add_argument("--use-dpw", action="store_true", help="Use DP walkthrough")
     parser.add_argument(
         "-s", "--save-data-for-debug", action="store_true", help="Save debugging data"
     )
@@ -590,6 +612,7 @@ if __name__ == "__main__":
         precision=args.precision,
         auto_cast=args.auto_cast,
         compiling=args.compiling,
+        use_dpw=args.use_dpw,
         save_data_for_debug=args.save_data_for_debug,
     )
     print("start a warm-up run.")

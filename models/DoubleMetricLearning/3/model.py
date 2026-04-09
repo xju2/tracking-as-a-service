@@ -61,11 +61,13 @@ class TritonPythonModel:
         model_path = Path(args["model_repository"]) / args["model_version"]
         auto_cast = get_parameter("auto_cast").lower() == "true"
         compiling = get_parameter("compiling").lower() == "true"
+        use_dpw = parameters.get("use_dpw", {"string_value": "False"})["string_value"].lower() == "true"
         config = MetricLearningInferenceConfig(
             model_path=model_path,
             device=self.device,
             auto_cast=auto_cast,
             compiling=compiling,
+            use_dpw=use_dpw,
             debug=self.debug,
             save_debug_data=False,
         )
