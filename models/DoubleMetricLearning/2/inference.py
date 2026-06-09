@@ -32,6 +32,16 @@ from interaction_gnn import (
 torch.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 
+
+def to_trk_tensor(trk, device):
+    if not isinstance(trk, np.ndarray):
+        trk = np.array(trk, dtype=np.int64)
+    else:
+        trk = trk.astype(np.int64, copy=False)
+
+    return torch.as_tensor(trk, dtype=torch.long, device=device)
+
+
 # def timed(fn):
 #     start = torch.cuda.Event(enable_timing=True)
 #     end = torch.cuda.Event(enable_timing=True)
@@ -517,17 +527,16 @@ class MetricLearningInference:
 
         i = 0
         for trk in tracks:
-            trk_tensor = torch.tensor(trk, device=R.device)
-            sorted_trk = trk_tensor[torch.argsort(R[trk_tensor])]
+            trk_device = "cpu" if self.config.use_dpw else device
+            track_r = cpu_R if self.config.use_dpw else R
+            trk_tensor = to_trk_tensor(trk, trk_device)
+            sorted_trk = trk_tensor[torch.argsort(track_r[trk_tensor])]
 
             n = len(sorted_trk)
             track_candidates[i : i + n] = sorted_trk.cpu().tolist()
             i += n
             track_candidates[i] = -1
-                trk_device = "cpu" if self.config.use_dpw else device
-                track_r = cpu_R if self.config.use_dpw else R
-                trk_tensor = to_trk_tensor(trk, trk_device)
-                sorted_trk = trk_tensor[torch.argsort(track_r[trk_tensor])]
+            i += 1
         # write candidates to a file.
         if debug:
             print("track_candidates", track_candidates[:20])
