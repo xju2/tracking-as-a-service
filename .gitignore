@@ -169,3 +169,10 @@ jobs/
 *.qdstrm
 *.ipynb_checkpoints
 *.pt
+
+# Local Athena/Triton execution artifacts
+.asetup.save
+oom
+triton_ready.txt
+run/
+run_dml3_*/

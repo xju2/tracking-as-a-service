@@ -1,0 +1,5 @@
+#ifndef MMG_SPACE_POINT
+#define MMG_SPACE_POINT
+#include "space_point.cpp"
+#endif
+

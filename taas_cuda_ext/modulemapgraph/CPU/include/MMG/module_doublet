@@ -1,0 +1,5 @@
+#ifndef MMG_MODULE_DOUBLET
+#define MMG_MODULE_DOUBLET
+#include "module_doublet.cpp"
+#endif
+

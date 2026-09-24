@@ -1,0 +1,5 @@
+#ifndef MMG_GEOMETRIC_CUTS
+#define MMG_GEOMETRIC_CUTS
+#include "geometric_cuts.cpp"
+#endif
+

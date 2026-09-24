@@ -1,0 +1,5 @@
+#ifndef MMG_VERTEX
+#define MMG_VERTEX
+#include "vertex.cpp"
+#endif
+

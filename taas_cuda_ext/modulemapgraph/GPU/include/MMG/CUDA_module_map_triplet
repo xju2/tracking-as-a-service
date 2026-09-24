@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_MODULE_MAP_TRIPLET
+#define MMG_CUDA_MODULE_MAP_TRIPLET
+#include "module_map_triplet.cu"
+#endif
+

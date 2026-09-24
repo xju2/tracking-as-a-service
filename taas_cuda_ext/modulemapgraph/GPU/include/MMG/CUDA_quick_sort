@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_QUICK_SORT
+#define MMG_CUDA_QUICK_SORT
+#include "quick_sort.cu"
+#endif
+

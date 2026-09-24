@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from threading import Lock
 
 import numpy as np
 import torch
@@ -49,23 +50,57 @@ class TritonPythonModel:
                 raise ValueError(f"Parameter {name} is required but not provided.")
             return parameters[name]["string_value"]
 
-        self.save_event = get_parameter("save_event").lower() == "true"
+        def get_optional_parameter(name, default):
+            if name in parameters:
+                return parameters[name]["string_value"]
+            return default
+
+        self.save_event = (
+            parameters.get("save_event", {"string_value": "False"})["string_value"].lower()
+            == "true"
+        )
         model_path = Path(args["model_repository"]) / args["model_version"]
         device = "cuda" if torch.cuda.is_available() else "cpu"
         auto_cast = get_parameter("auto_cast").lower() == "true"
         compiling = get_parameter("compiling").lower() == "true"
-        use_dpw = parameters.get("use_dpw", {"string_value": "False"})["string_value"].lower() == "true"
+        use_dwalk = get_optional_parameter("use_dwalk", "False").lower() == "true"
+        dwalk_use_gpu = get_optional_parameter("dwalk_use_gpu", "True").lower() == "true"
+        dwalk_cc_backend = get_optional_parameter("dwalk_cc_backend", "custom_cuda")
+        dwalk_path_metrics = get_optional_parameter("dwalk_path_metrics", "score_weighted_length")
+        collect_timing = (
+            parameters.get("collect_timing", {"string_value": "True"})["string_value"].lower()
+            == "true"
+        )
+        filter_timing_skip_events = max(
+            int(parameters.get("filter_timing_skip_events", {"string_value": "0"})["string_value"]),
+            0,
+        )
+        timing_report_interval = int(
+            parameters.get("timing_report_interval", {"string_value": "100"})[
+                "string_value"
+            ]
+        )
         config = MetricLearningInferenceConfig(
             model_path=model_path,
             device=device,
             auto_cast=auto_cast,
             compiling=compiling,
             debug=self.debug,
-            use_dpw=use_dpw,
+            use_dwalk=use_dwalk,
+            dwalk_use_gpu=dwalk_use_gpu,
+            dwalk_cc_backend=dwalk_cc_backend,
+            dwalk_path_metrics=dwalk_path_metrics,
             save_debug_data=self.save_event,
+            collect_timing=collect_timing,
+            filter_timing_skip_events=filter_timing_skip_events,
         )
 
         self.inference = MetricLearningInference(config)
+        self.collect_timing = collect_timing
+        self.timing_report_interval = max(timing_report_interval, 1)
+        self._timing_lock = Lock()
+        self._timed_request_count = 0
+        self._filter_time_total = 0.0
 
         # Get OUTPUT0 configuration
         output0_config = pb_utils.get_output_config_by_name(model_config, "LABELS")
@@ -111,6 +146,17 @@ class TritonPythonModel:
                 if features.shape[0] > 2
                 else np.array([-1], dtype=np.int64)
             )
+
+            if self.collect_timing and "filtering_seconds" in self.inference.last_timing:
+                with self._timing_lock:
+                    self._timed_request_count += 1
+                    self._filter_time_total += self.inference.last_timing["filtering_seconds"]
+                    if self._timed_request_count % self.timing_report_interval == 0:
+                        average_ms = 1000.0 * self._filter_time_total / self._timed_request_count
+                        print(
+                            "[timing] DoubleMetricLearning average filtering time: "
+                            f"{average_ms:.3f} ms over {self._timed_request_count} requests"
+                        )
 
             if self.debug:
                 print(f"output shape: {track_ids.shape}")

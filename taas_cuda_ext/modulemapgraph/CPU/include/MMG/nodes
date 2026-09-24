@@ -1,0 +1,5 @@
+#ifndef MMG_NODES
+#define MMG_NODES
+#include "nodes.cpp"
+#endif
+

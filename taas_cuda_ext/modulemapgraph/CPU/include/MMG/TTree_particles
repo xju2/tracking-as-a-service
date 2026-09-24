@@ -1,0 +1,5 @@
+#ifndef MMG_TTREE_PARTICLES
+#define MMG_TTREE_PARTICLES
+#include "TTree_particles.cpp"
+#endif
+

@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_MODULE_MAP_DOUBLET
+#define MMG_CUDA_MODULE_MAP_DOUBLET
+#include "module_map_doublet.cu"
+#endif
+

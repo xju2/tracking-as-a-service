@@ -1,0 +1,5 @@
+#ifndef MMG_MODULE_TRIPLET
+#define MMG_MODULE_TRIPLET
+#include "module_triplet.cpp"
+#endif
+

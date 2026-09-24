@@ -1,0 +1,5 @@
+#ifndef MMG_TTREE_DUMP
+#define MMG_TTREE_DUMP
+#include "TTree_dump.hpp"
+#endif
+

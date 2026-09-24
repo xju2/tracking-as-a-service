@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_TOOLS
+#define MMG_CUDA_TOOLS
+#include "cuda_tools.cu"
+#endif
+

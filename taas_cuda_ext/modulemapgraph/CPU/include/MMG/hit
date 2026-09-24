@@ -1,0 +1,5 @@
+#ifndef MMG_HIT
+#define MMG_HIT
+#include "hit.cpp"
+#endif
+

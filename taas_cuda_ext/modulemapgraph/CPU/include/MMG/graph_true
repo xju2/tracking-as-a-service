@@ -1,0 +1,5 @@
+#ifndef MMG_GRAPH_TRUE
+#define MMG_GRAPH_TRUE
+#include "graph_true.cpp"
+#endif
+

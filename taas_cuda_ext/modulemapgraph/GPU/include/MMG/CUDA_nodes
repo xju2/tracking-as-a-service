@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_NODES
+#define MMG_CUDA_NODES
+#include "nodes.cu"
+#endif
+

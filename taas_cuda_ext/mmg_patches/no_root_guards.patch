@@ -1,0 +1,191 @@
+diff -ruN a/GPU/include/MMG/edge_layer_connector.cuh b/GPU/include/MMG/edge_layer_connector.cuh
+--- a/GPU/include/MMG/edge_layer_connector.cuh	2026-07-17 09:09:29.958208252 -0700
++++ b/GPU/include/MMG/edge_layer_connector.cuh	2026-07-17 09:12:17.429369642 -0700
+@@ -15,8 +15,10 @@
+ 
+ #include <string>
+ #include <iostream>
++#ifndef TAAS_MMG_NO_ROOT
+ #include <MMG/tracks>
+ #include <boost/program_options.hpp>
++#endif
+ #include <boost/regex.hpp>
+ #include <thrust/device_vector.h>
+ #include <MMG/parameters>
+@@ -52,10 +54,14 @@
+ 
+     // GPU data
+     int _blocks;
++#ifndef TAAS_MMG_NO_ROOT
+     void read_event (const std::string&);
++#endif
+ 
+   public:
++#ifndef TAAS_MMG_NO_ROOT
+     CUDA_edge_layer_connector (const boost::program_options::variables_map&);
++#endif
+     CUDA_edge_layer_connector (CUDA_graph<T>*, const T&, const int&, int, int=30);
+     ~CUDA_edge_layer_connector ();
+ 
+diff -ruN a/GPU/include/MMG/edges.cuh b/GPU/include/MMG/edges.cuh
+--- a/GPU/include/MMG/edges.cuh	2026-07-17 09:09:31.106181000 -0700
++++ b/GPU/include/MMG/edges.cuh	2026-07-17 09:12:17.429369642 -0700
+@@ -13,10 +13,18 @@
+ #error Must use C++ for the type CUDA edges
+ #endif
+ 
++#ifndef TAAS_MMG_NO_ROOT
+ #include <MMG/edges>
++#else
++template <class T> class edges;
++#endif
+ #include <MMG/CUDA_mask>
+ #include <MMG/CUDA_stream_compaction>
++#ifndef TAAS_MMG_NO_ROOT
+ #include <MMG/CUDA_hits>
++#else
++template <class T> class CUDA_hits;
++#endif
+ //#include <MMG/CUDA_quick_sort>
+ 
+ //=================================
+@@ -45,7 +53,9 @@
+     ~CUDA_edges ();
+ 
+     void reduce (int*, int*, T*, T*, T*, CUDA_mask&, int);
++#ifndef TAAS_MMG_NO_ROOT
+     void reduce (int*, int*, T*, T*, T*, CUDA_mask&, CUDA_hits<T>&, int);
++#endif
+ 
+     void reduce (CUDA_mask&, int);
+     void reduce (CUDA_mask&, int*, int);
+@@ -69,9 +79,13 @@
+     void filter_last_edges (CUDA_mask&, CUDA_edges<T>&, int);
+     void filter_low_scores (CUDA_mask&, T, int);
+ //    void filter (CUDA_mask&, CUDA_mask&, CUDA_mask&, int); // exclude edges that are not in edges given as argument => modify mask
++#ifndef TAAS_MMG_NO_ROOT
+     void features (CUDA_hits<T>&, int);
++#endif
+     void kill ();
++#ifndef TAAS_MMG_NO_ROOT
+     void DeviceToHost (edges<T>&);
++#endif
+ 
+     inline int nb_edges () {return _nb_edges;}
+     inline int* source () {return _edge_source;}
+diff -ruN a/GPU/include/MMG/tracks.cuh b/GPU/include/MMG/tracks.cuh
+--- a/GPU/include/MMG/tracks.cuh	2026-07-17 09:09:32.154896849 -0700
++++ b/GPU/include/MMG/tracks.cuh	2026-07-17 09:12:17.429369642 -0700
+@@ -17,7 +17,11 @@
+ //#include <MMG/CUDA_stream_compaction>
+ #include <MMG/CUDA_edges>
+ 
++#ifndef TAAS_MMG_NO_ROOT
+ #include <MMG/tracks>
++#else
++class tracks;
++#endif
+ 
+ //==================================
+ template <class T> class CUDA_tracks
+@@ -35,7 +39,9 @@
+ 
+   public:
+     CUDA_tracks (int, int);
++#ifndef TAAS_MMG_NO_ROOT
+     CUDA_tracks (tracks&);
++#endif
+     ~CUDA_tracks ();
+ 
+     inline int size () {return _size;}
+diff -ruN a/GPU/src/edge_layer_connector.cu b/GPU/src/edge_layer_connector.cu
+--- a/GPU/src/edge_layer_connector.cu	2026-07-17 09:09:40.585149000 -0700
++++ b/GPU/src/edge_layer_connector.cu	2026-07-17 09:12:17.429369642 -0700
+@@ -249,6 +249,8 @@
+ 
+ //=====CPU functions for edge layer connector========================================
+ 
++#ifndef TAAS_MMG_NO_ROOT
++
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+ CUDA_edge_layer_connector<T>::CUDA_edge_layer_connector (const boost::program_options::variables_map &po_vm){
+@@ -500,6 +502,8 @@
+ //  std::cout << "# of modules = " << module_map_triplet.module_map().size() << std::endl;
+ }
+ 
++#endif
++
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+ CUDA_edge_layer_connector<T>::CUDA_edge_layer_connector (CUDA_graph<T>* G, const T& weights_cut, const int& min_hits,
+diff -ruN a/GPU/src/edges.cu b/GPU/src/edges.cu
+--- a/GPU/src/edges.cu	2026-07-17 09:09:51.390933000 -0700
++++ b/GPU/src/edges.cu	2026-07-17 09:12:17.433369606 -0700
+@@ -470,6 +470,7 @@
+   compact_stream<<<grid_dim,blocks>>> (_phi_slope, phi_slope, mask.cuda_mask(), mask.cuda_mask_sum(), mask_size);
+ }
+ 
++#ifndef TAAS_MMG_NO_ROOT
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+ void CUDA_edges<T>::reduce (int* M1, int* M2, T* deta, T* dphi, T* phi_slope,
+@@ -485,6 +486,7 @@
+     convert2ACORN<<<grid_dim,blocks>>> (_ACORN_edge_target, _edge_target, hits.cuda_ACORN_positions(), _nb_edges);
+   }
+ }
++#endif
+ 
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+@@ -860,6 +862,7 @@
+ }
+ */
+ 
++#ifndef TAAS_MMG_NO_ROOT
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+ void CUDA_edges<T>::features (CUDA_hits<T>& hits, int blocks){
+@@ -869,6 +872,7 @@
+                                       hits.cuda_vertices_sum(), hits.cuda_R(), hits.cuda_z(), _phi_slope,
+                                       std::numbers::pi_v<T>, _nb_edges);
+ }
++#endif
+ 
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+@@ -896,6 +900,7 @@
+   _nb_edges = 0;
+ }
+ 
++#ifndef TAAS_MMG_NO_ROOT
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+ void CUDA_edges<T>::DeviceToHost (edges<T>& e){
+@@ -911,6 +916,7 @@
+   cudaMemcpyAsync (e.phi_slope().data(), _phi_slope, _nb_edges * sizeof(T), cudaMemcpyDeviceToHost);
+   cudaMemcpyAsync (e.r_phi_slope().data(), _r_phi_slope, _nb_edges * sizeof(T), cudaMemcpyDeviceToHost);
+ }
++#endif
+ 
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+diff -ruN a/GPU/src/tracks.cu b/GPU/src/tracks.cu
+--- a/GPU/src/tracks.cu	2026-07-17 09:09:52.511425000 -0700
++++ b/GPU/src/tracks.cu	2026-07-17 09:12:17.433369606 -0700
+@@ -592,6 +592,7 @@
+   cudaMalloc (&_PID, _max_tracks * sizeof(uint64_t));
+ }
+ 
++#ifndef TAAS_MMG_NO_ROOT
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>
+ CUDA_tracks<T>::CUDA_tracks (tracks& cpu_tracks){
+@@ -623,6 +624,7 @@
+   print_vector<<<1,1>>> (_hits, cpu_tracks.hits_by_track_sum()[2], cpu_tracks.hits_by_track_sum()[3]);
+   print_vector<<<1,1>>> (_nb_hits, 4);
+ }
++#endif
+ 
+ //---------------------------------------------------------------------------------------------------------------------
+ template <class T>

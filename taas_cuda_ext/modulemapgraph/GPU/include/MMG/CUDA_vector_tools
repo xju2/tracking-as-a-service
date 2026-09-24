@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_VECTOR_TOOLS
+#define MMG_CUDA_VECTOR_TOOLS
+#include "vector_tools.cu"
+#endif
+

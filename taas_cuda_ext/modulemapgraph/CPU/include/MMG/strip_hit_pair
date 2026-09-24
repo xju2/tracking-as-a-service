@@ -1,0 +1,5 @@
+#ifndef MMG_STRIP_HIT_PAIR
+#define MMG_STRIP_HIT_PAIR
+#include "strip_hit_pair.cpp"
+#endif
+

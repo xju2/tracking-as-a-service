@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from operator import itemgetter
+import sys
 
 import frnn
 import networkx as nx
@@ -12,10 +13,15 @@ from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
 from torch_geometric.utils import to_networkx
 import torch.cuda.nvtx as nvtx
-from dp_walkthrough import dp_walk_through, get_simple_path as get_dpw_simple_path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from taas_graph_segmentation.dwalk import dwalk, get_simple_path as get_dwalk_simple_path
 
 from torch_model_inference import run_gnn_filter, run_gnn_filter_optimized, run_torch_model
-import fastwalkthrough as walkutils
+from taas_graph_segmentation import fastwalkthrough as walkutils
 import time
 import yaml
 import onnxruntime as ort
@@ -88,12 +94,17 @@ class MetricLearningInferenceConfig:
     auto_cast: bool
     compiling: bool
     debug: bool
-    use_dpw: bool = False
+    use_dwalk: bool = False
+    dwalk_use_gpu: bool = True
+    dwalk_cc_backend: str = "custom_cuda"
+    dwalk_path_metrics: str = "score_weighted_length"
     save_debug_data: bool = False
     r_max: float = 0.14
     k_max: int = 1000
     filter_cut: float = 0.05
     filter_batches: int = 10
+    collect_timing: bool = False
+    filter_timing_skip_events: int = 0
     cc_cut: float = 0.01
     walk_min: float = 0.1
     walk_max: float = 0.6
@@ -127,6 +138,8 @@ class MetricLearningInferenceConfig:
 class MetricLearningInference:
     def __init__(self, config: MetricLearningInferenceConfig):
         self.config = config
+        self.last_timing: dict[str, float] = {}
+        self._filter_timed_event_count = 0
         print(self.config)
         model_path = (
             Path(self.config.model_path)
@@ -247,12 +260,20 @@ class MetricLearningInference:
             "cluster_eta_2",
         ]
 
+    def _record_filter_timing(self, duration_seconds: float) -> None:
+        self._filter_timed_event_count += 1
+        if self._filter_timed_event_count <= self.config.filter_timing_skip_events:
+            self.last_timing.pop("filtering_seconds", None)
+            return
+        self.last_timing["filtering_seconds"] = duration_seconds
+
     def forward(
         self,
         node_features: torch.Tensor,
         hit_id: torch.Tensor | None = None,
         nvtx_enabled: bool = False,
     ):
+        self.last_timing.clear()
         device = self.config.device
         use_nvtx = nvtx_enabled and torch.cuda.is_available() and str(device).startswith("cuda")
         debug = self.config.debug
@@ -362,8 +383,7 @@ class MetricLearningInference:
         # GNNFiltering
         if use_nvtx:
             nvtx.range_push("GNN Filtering")
-        # torch.cuda.synchronize()
-        # t0 = time.time()
+        filter_start_time = time.perf_counter() if self.config.collect_timing else None
         edge_scores, edge_index, _ = run_gnn_filter_optimized(
             self.filter_model,
             self.config.auto_cast,
@@ -371,11 +391,13 @@ class MetricLearningInference:
             filtering_inputs,
             edge_index,
         )
+        if self.config.collect_timing:
+            if str(device).startswith("cuda") and torch.cuda.is_available():
+                torch.cuda.synchronize()
+            self._record_filter_timing(time.perf_counter() - filter_start_time)
         if use_nvtx:
             torch.cuda.synchronize()
             nvtx.range_pop()
-        # torch.cuda.synchronize()
-        # print(f"run_torch_model (filtering) time: {time.time() - t0:.4f} s")
 
         if debug:
             print("edge_score", edge_scores[:10])
@@ -492,18 +514,22 @@ class MetricLearningInference:
         graph = RemoveIsolatedNodes()(graph)
 
         all_trkx = {}
-        if self.config.use_dpw:
-            cpu_graph = graph.cpu()
-            cpu_R = R.cpu()
-            all_trkx["cc"], cpu_graph = get_dpw_simple_path(
-                cpu_graph, score_name, self.config.cc_cut
+        if self.config.use_dwalk:
+            all_trkx["cc"], dwalk_graph = get_dwalk_simple_path(
+                graph,
+                score_name,
+                self.config.cc_cut,
+                use_gpu=self.config.dwalk_use_gpu,
+                cc_backend=self.config.dwalk_cc_backend,
             )
-            all_trkx["walk"] = dp_walk_through(
-                cpu_graph,
+            all_trkx["walk"] = dwalk(
+                dwalk_graph,
                 score_name,
                 self.config.walk_min,
                 self.config.walk_max,
-                "score_weighted_length",
+                self.config.dwalk_path_metrics,
+                use_gpu=self.config.dwalk_use_gpu,
+                cc_backend=self.config.dwalk_cc_backend,
             )
         else:
             all_trkx["cc"], graph = walkutils.get_simple_path(graph)
@@ -526,10 +552,9 @@ class MetricLearningInference:
         track_candidates = np.empty(total_length, dtype=int)
 
         i = 0
+        track_r = R
         for trk in tracks:
-            trk_device = "cpu" if self.config.use_dpw else device
-            track_r = cpu_R if self.config.use_dpw else R
-            trk_tensor = to_trk_tensor(trk, trk_device)
+            trk_tensor = to_trk_tensor(trk, device)
             sorted_trk = trk_tensor[torch.argsort(track_r[trk_tensor])]
 
             n = len(sorted_trk)
@@ -562,8 +587,12 @@ def create_metric_learning_end2end_rel24(
     precision: str,
     auto_cast: bool,
     compiling: bool,
-    use_dpw: bool,
+    use_dwalk: bool,
     save_data_for_debug: bool,
+    dwalk_use_gpu: bool = True,
+    dwalk_cc_backend: str = "custom_cuda",
+    dwalk_path_metrics: str = "score_weighted_length",
+    filter_timing_skip_events: int = 0,
 ):
     config = MetricLearningInferenceConfig(
         model_path=model_path,
@@ -571,12 +600,16 @@ def create_metric_learning_end2end_rel24(
         auto_cast=auto_cast,
         compiling=compiling,
         debug=debug,
-        use_dpw=use_dpw,
+        use_dwalk=use_dwalk,
+        dwalk_use_gpu=dwalk_use_gpu,
+        dwalk_cc_backend=dwalk_cc_backend,
+        dwalk_path_metrics=dwalk_path_metrics,
         save_debug_data=save_data_for_debug,
         r_max=0.14,
         k_max=1000,
         filter_cut=0.05,
         filter_batches=10,
+        filter_timing_skip_events=max(filter_timing_skip_events, 0),
         cc_cut=0.01,
         walk_min=0.1,
         walk_max=0.6,
@@ -605,7 +638,33 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--device", default="cuda", help="Device")
     parser.add_argument("-t", "--timing", action="store_true", help="Time the inference")
     parser.add_argument("-c", "--compiling", action="store_true", help="Use compiling")
-    parser.add_argument("--use-dpw", action="store_true", help="Use DP walkthrough")
+    parser.add_argument("--use-dwalk", action="store_true", help="Use D-WALK")
+    parser.add_argument(
+        "--dwalk-use-gpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run D-WALK on CUDA when available",
+    )
+    parser.add_argument(
+        "--dwalk-cc-backend",
+        dest="dwalk_cc_backend",
+        default="custom_cuda",
+        choices=("auto", "scipy", "custom_cuda"),
+        help="Connected-components backend for D-WALK",
+    )
+    parser.add_argument(
+        "--dwalk-path-metrics",
+        dest="dwalk_path_metrics",
+        default="score_weighted_length",
+        choices=("score_weighted_length", "length"),
+        help="Path metric for D-WALK",
+    )
+    parser.add_argument(
+        "--filter-timing-skip-events",
+        type=int,
+        default=0,
+        help="Exclude the first N filtered events from timing averages",
+    )
     parser.add_argument(
         "-s", "--save-data-for-debug", action="store_true", help="Save debugging data"
     )
@@ -621,8 +680,12 @@ if __name__ == "__main__":
         precision=args.precision,
         auto_cast=args.auto_cast,
         compiling=args.compiling,
-        use_dpw=args.use_dpw,
+        use_dwalk=args.use_dwalk,
+        dwalk_use_gpu=args.dwalk_use_gpu,
+        dwalk_cc_backend=args.dwalk_cc_backend,
+        dwalk_path_metrics=args.dwalk_path_metrics,
         save_data_for_debug=args.save_data_for_debug,
+        filter_timing_skip_events=args.filter_timing_skip_events,
     )
     print("start a warm-up run.")
     node_features = torch.load(args.input)

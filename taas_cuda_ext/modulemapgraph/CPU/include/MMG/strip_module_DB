@@ -1,0 +1,5 @@
+#ifndef MMG_STRIP_MODULE_DB
+#define MMG_STRIP_MODULE_DB
+#include "strip_module_DB.cpp"
+#endif
+

@@ -1,0 +1,5 @@
+#ifndef MMG_HITS_INFOS
+#define MMG_HITS_INFOS
+#include "hits_infos.cpp"
+#endif
+

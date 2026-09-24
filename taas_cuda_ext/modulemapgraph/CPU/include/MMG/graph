@@ -1,0 +1,4 @@
+#ifndef MMG_GRAPH
+#define MMG_GRAPH
+#include "graph.cpp"
+#endif

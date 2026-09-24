@@ -1,0 +1,5 @@
+#ifndef MMG_VERTEX_TRUE
+#define MMG_VERTEX_TRUE
+#include "vertex_true.hpp"
+#endif
+

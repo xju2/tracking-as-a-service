@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_PRESCAN
+#define MMG_CUDA_PRESCAN
+#include "prescan.cu"
+#endif
+

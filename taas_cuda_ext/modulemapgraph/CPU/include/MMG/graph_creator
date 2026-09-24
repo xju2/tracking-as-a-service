@@ -1,0 +1,5 @@
+#ifndef MMG_GRAPH_CREATOR
+#define MMG_GRAPH_CREATOR
+#include "graph_creator.cpp"
+#endif
+
