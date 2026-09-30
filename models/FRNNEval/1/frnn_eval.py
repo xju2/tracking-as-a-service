@@ -8,6 +8,7 @@ the same float32 embedding and the two directed edge lists are compared as sets.
 from __future__ import annotations
 
 import csv
+import json
 import os
 import sys
 import time
@@ -27,6 +28,8 @@ class FRNNEvalConfig:
     debug: bool = False
     # Append per-request performance metrics to output_dir/eval_metrics_pid<pid>.csv.
     save_eval_metrics: bool = False
+    # Save every event's embedding and edge lists under output_dir/data/ for libFRNN.
+    save_data: bool = False
     r_max: float = 0.12
     k_max: int = 1000
     embedding_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2"
@@ -157,6 +160,7 @@ class FRNNEval:
             INPUT_NODE_FEATURES.index(x) for x in self.config.embedding_node_features
         ]
         self.num_saved = 0
+        self.num_data_saved = 0
 
     def embed(self, node_features: torch.Tensor) -> torch.Tensor:
         node_features = node_features.to(self.config.device).float()
@@ -185,6 +189,37 @@ class FRNNEval:
         )
         self.num_saved += 1
         return out_path
+
+    def save_data(self, embedding, edges_frnn, edges_libfrnn, num_diff, request_id) -> Path:
+        """Save one event as .npy files for the libFRNN benchmarks.
+
+        output_dir/data/<time>_pid<pid>_<n>/
+            embedding.npy       float32 [N, D], C order, the exact input of both libraries
+            edges_frnn.npy      int64 [2, E], original FRNN (reference), directed, no self-loops
+            edges_libfrnn.npy   int64 [2, E'], libFRNN
+            meta.json           request_id, num_nodes, dim, r_max, k_max, edge counts, num_diff_edges
+        """
+        import numpy as np
+
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        out_dir = self.config.output_dir / "data" / f"{stamp}_pid{os.getpid()}_{self.num_data_saved}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        np.save(out_dir / "embedding.npy", embedding.cpu().numpy())
+        np.save(out_dir / "edges_frnn.npy", edges_frnn.cpu().numpy())
+        np.save(out_dir / "edges_libfrnn.npy", edges_libfrnn.cpu().numpy())
+        meta = {
+            "request_id": request_id,
+            "num_nodes": embedding.shape[0],
+            "dim": embedding.shape[1],
+            "r_max": self.config.r_max,
+            "k_max": self.config.k_max,
+            "num_frnn_edges": edges_frnn.shape[1],
+            "num_libfrnn_edges": edges_libfrnn.shape[1],
+            "num_diff_edges": num_diff,
+        }
+        (out_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+        self.num_data_saved += 1
+        return out_dir
 
     def save_metrics(self, metrics: dict) -> None:
         # One file per process, so multiple model instances never write to the same file.
@@ -227,6 +262,10 @@ class FRNNEval:
                     "libfrnn_latency_ms": f"{libfrnn_latency:.3f}",
                 }
             )
+        if self.config.save_data:
+            out_dir = self.save_data(embedding, edges_frnn, edges_libfrnn, num_diff, request_id)
+            if self.config.debug:
+                print(f"Saved embedding and edge lists to {out_dir}")
         if num_diff:
             out_path = self.save(embedding, edges_frnn, edges_libfrnn, num_diff)
             print(f"FRNN and libFRNN disagree on {num_diff:,} edges; saved to {out_path}")
@@ -247,6 +286,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "-s", "--save-eval-metrics", action="store_true", help="Save performance metrics"
     )
+    parser.add_argument(
+        "-d", "--save-data", action="store_true", help="Save embedding and edge lists as .npy"
+    )
     args = parser.parse_args()
 
     evaluator = FRNNEval(
@@ -256,6 +298,7 @@ if __name__ == "__main__":
             auto_cast=args.auto_cast,
             debug=args.verbose,
             save_eval_metrics=args.save_eval_metrics,
+            save_data=args.save_data,
         )
     )
     result = evaluator(torch.load(args.input), request_id=Path(args.input).name)

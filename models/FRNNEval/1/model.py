@@ -47,6 +47,7 @@ class TritonPythonModel:
             auto_cast=get_parameter("auto_cast").lower() == "true",
             debug=get_parameter("debug").lower() == "true",
             save_eval_metrics=get_parameter("save_eval_metrics").lower() == "true",
+            save_data=get_parameter("save_data").lower() == "true",
             r_max=float(get_parameter("r_max")),
             k_max=int(get_parameter("k_max")),
         )

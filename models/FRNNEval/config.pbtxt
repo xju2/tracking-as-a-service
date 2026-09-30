@@ -63,6 +63,13 @@ parameters: {
   value: {string_value: "False"}
 }
 
+# Save every event's embedding and both edge lists as .npy files under
+# output_dir/data/<time>_pid<pid>_<n>/ for the libFRNN benchmarks.
+parameters: {
+  key: "save_data",
+  value: {string_value: "False"}
+}
+
 parameters: {
   key: "debug",
   value: {string_value: "False"}

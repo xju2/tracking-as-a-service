@@ -24,6 +24,18 @@ Parameters in `config.pbtxt`:
   `num_diff_edges`, `frnn_latency_ms` and `libfrnn_latency_ms`. Latencies cover only
   the edge building, bracketed by `torch.cuda.synchronize()`. The first request
   includes one-time CUDA warm-up, so exclude it from timing studies.
+- `save_data`: if `True`, save every event (not only disagreeing ones) for the libFRNN
+  benchmarks to `output_dir/data/<time>_pid<pid>_<n>/`:
+  - `embedding.npy`: float32 `[N, D]`, C order, the exact tensor fed to both libraries.
+  - `edges_frnn.npy`: int64 `[2, E]`, directed edges from the original FRNN (reference),
+    self-loops removed.
+  - `edges_libfrnn.npy`: int64 `[2, E']`, same from libFRNN.
+  - `meta.json`: `request_id`, `num_nodes`, `dim`, `r_max`, `k_max`, `num_frnn_edges`,
+    `num_libfrnn_edges` and `num_diff_edges`.
+
+  `.npy` is a short text header followed by the raw little-endian array, so it is
+  lossless, loads with `numpy.load(..., mmap_mode="r")`, and in C++ it takes a few lines
+  to parse the header and `fread` the rest.
 
 The original FRNN keeps `k_max` neighbors including the point itself, whereas libFRNN
 applies `max_neighbors` after excluding it. libFRNN is therefore called with
@@ -45,4 +57,5 @@ Offline check without Triton (inside the same image):
 cd models/FRNNEval/1
 python frnn_eval.py -i /global/cfs/cdirs/m3443/data/for_alina/all_input_node_features.pt -v
 # add -s to also write eval_metrics_pid<pid>.csv to the output directory (-o)
+# add -d to also save the embedding and edge lists as .npy under <output-dir>/data/
 ```
