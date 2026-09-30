@@ -33,6 +33,12 @@ This model requires the image built from `Dockerfile.frnn-eval`:
 ```bash
 podman-hpc build --format docker -f Dockerfile.frnn-eval -t docexoty/frnn-eval .
 ```
+and launched with it; `scripts/start-tritonserver.sh` defaults to an image without
+libFRNN, so pass `-i`:
+```bash
+podman-hpc migrate docexoty/frnn-eval
+./scripts/start-tritonserver.sh -o triton_ready.txt -m FRNNEval -i localhost/docexoty/frnn-eval:latest
+```
 
 Offline check without Triton (inside the same image):
 ```bash

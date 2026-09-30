@@ -43,6 +43,15 @@ for the [FRNNEval](models/FRNNEval/README.md) validation model:
 podman-hpc build --format docker -f Dockerfile.frnn-eval -t docexoty/frnn-eval .
 ```
 
+FRNNEval needs `frnn_cuda`, which only this image provides. Make the image available
+on compute nodes and launch the server with it (`-i`); the default image lacks libFRNN
+and every FRNNEval request would fail:
+```bash
+podman-hpc migrate docexoty/frnn-eval
+srun --job-name=FRNNEval -C "gpu&hbm80g" -N 1 -G 1 -c 10 -n 1 -t 4:00:00 -A m3443 \
+  -q interactive /bin/bash -c "./scripts/start-tritonserver.sh -o triton_ready.txt -m FRNNEval -i localhost/docexoty/frnn-eval:latest"
+```
+
 
 ### Install packages.
 ```
