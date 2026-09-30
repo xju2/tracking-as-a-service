@@ -1,0 +1,36 @@
+# Triton image for the "frnn-eval" service.
+#
+# Extends the Tracking-as-a-Service image (built from ./Dockerfile), which already
+# provides the original FRNN (`import frnn`), by adding libFRNN (`import frnn_cuda`)
+# with its PyTorch CUDA interface. The two packages have different import names
+# and coexist in the same environment.
+#
+# Build:
+#   podman-hpc build --format docker -f Dockerfile.frnn-eval -t docexoty/frnn-eval .
+ARG BASE_IMAGE=docker.io/docexoty/tritonserver:latest
+FROM ${BASE_IMAGE}
+
+LABEL description="Triton Server with the original FRNN and libFRNN for FRNN validation"
+LABEL version="1.0"
+
+ARG LIBFRNN_REPO=https://github.com/xju2/libFRNN.git
+ARG LIBFRNN_REF=main
+ARG CUDA_ARCHITECTURES=80
+
+# --no-build-isolation lets CMake find the torch already installed in the image,
+# which is required to build the frnn_cuda.torch extension.
+RUN pip3 install scikit-build-core pybind11 \
+  && cd /tmp \
+  && git clone ${LIBFRNN_REPO} libFRNN \
+  && cd libFRNN \
+  && git checkout ${LIBFRNN_REF} \
+  && CMAKE_ARGS="-DFRNN_BUILD_TORCH=ON -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
+     pip3 install --no-build-isolation . \
+  && cd / && rm -rf /tmp/libFRNN
+
+# Fail the build early if either package is missing. (Importing them is left to
+# runtime because the build host may not expose a GPU driver.)
+RUN pip3 show frnn frnn_cuda
+
+ENTRYPOINT []
+CMD ["/bin/bash"]
