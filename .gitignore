@@ -169,3 +169,4 @@ jobs/
 *.qdstrm
 *.ipynb_checkpoints
 *.pt
+frnn_eval_outputs/

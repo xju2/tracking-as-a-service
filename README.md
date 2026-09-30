@@ -37,6 +37,12 @@ Supported models are saved in the [model_repos](model_repos) directory.
 podman-hpc build --format docker -f Dockerfile -t docexoty/tritonserver
 ```
 
+The `frnn-eval` image adds [libFRNN](https://github.com/xju2/libFRNN) on top of it,
+for the [FRNNEval](models/FRNNEval/README.md) validation model:
+```bash
+podman-hpc build --format docker -f Dockerfile.frnn-eval -t docexoty/frnn-eval .
+```
+
 
 ### Install packages.
 ```

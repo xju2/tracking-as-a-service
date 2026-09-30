@@ -1,0 +1,61 @@
+name: "FRNNEval"
+backend: "python"
+
+input [
+  {
+    name: "FEATURES"
+    data_type: TYPE_FP32
+    dims: [ -1, 44 ]
+  }
+]
+
+# 0: the original FRNN and libFRNN produce the same edge list.
+# >0: number of edges found by only one of them.
+output [
+  {
+    name: "RESULT"
+    data_type: TYPE_INT64
+    dims: [ 1 ]
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 0 ]
+   }
+]
+
+# Directory with embedding.ckpt and the MetricLearning modules,
+# relative to this model's directory.
+parameters: {
+  key: "embedding_model_dir",
+  value: {string_value: "../MetricLearning/4"}
+}
+
+# Where disagreeing events are saved, relative to the server's working directory.
+parameters: {
+  key: "output_dir",
+  value: {string_value: "frnn_eval_outputs"}
+}
+
+parameters: {
+  key: "r_max",
+  value: {string_value: "0.12"}
+}
+
+parameters: {
+  key: "k_max",
+  value: {string_value: "1000"}
+}
+
+parameters: {
+  key: "auto_cast",
+  value: {string_value: "False"}
+}
+
+parameters: {
+  key: "debug",
+  value: {string_value: "False"}
+}
