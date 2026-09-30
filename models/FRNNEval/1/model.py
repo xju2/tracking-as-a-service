@@ -46,6 +46,7 @@ class TritonPythonModel:
             device=self.device,
             auto_cast=get_parameter("auto_cast").lower() == "true",
             debug=get_parameter("debug").lower() == "true",
+            save_eval_metrics=get_parameter("save_eval_metrics").lower() == "true",
             r_max=float(get_parameter("r_max")),
             k_max=int(get_parameter("k_max")),
         )
@@ -64,7 +65,11 @@ class TritonPythonModel:
                 print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
 
             try:
-                result = self.evaluator(features) if features.shape[0] > 2 else 0
+                result = (
+                    self.evaluator(features, request_id=request.request_id())
+                    if features.shape[0] > 2
+                    else 0
+                )
             except Exception as error:  # report per request instead of killing the stub
                 responses.append(
                     pb_utils.InferenceResponse(

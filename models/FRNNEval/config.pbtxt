@@ -55,6 +55,14 @@ parameters: {
   value: {string_value: "False"}
 }
 
+# Append per-request metrics (request ID, # of space points, # of FRNN and libFRNN
+# edges, # of differing edges, FRNN and libFRNN latencies) to
+# output_dir/eval_metrics_pid<pid>.csv.
+parameters: {
+  key: "save_eval_metrics",
+  value: {string_value: "False"}
+}
+
 parameters: {
   key: "debug",
   value: {string_value: "False"}

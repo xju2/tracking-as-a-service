@@ -7,6 +7,7 @@ the same float32 embedding and the two directed edge lists are compared as sets.
 
 from __future__ import annotations
 
+import csv
 import os
 import sys
 import time
@@ -24,6 +25,8 @@ class FRNNEvalConfig:
     device: str = "cuda"
     auto_cast: bool = False
     debug: bool = False
+    # Append per-request performance metrics to output_dir/eval_metrics_pid<pid>.csv.
+    save_eval_metrics: bool = False
     r_max: float = 0.12
     k_max: int = 1000
     embedding_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2"
@@ -106,6 +109,26 @@ def count_different_edges(edges_a: torch.Tensor, edges_b: torch.Tensor, num_node
     return int((counts == 1).sum().item())
 
 
+def timed(fn, *args):
+    """Run fn on the GPU and return (result, latency in ms)."""
+    torch.cuda.synchronize()
+    start = time.perf_counter()
+    result = fn(*args)
+    torch.cuda.synchronize()
+    return result, (time.perf_counter() - start) * 1000.0
+
+
+EVAL_METRICS_COLUMNS = [
+    "request_id",
+    "num_space_points",
+    "num_frnn_edges",
+    "num_libfrnn_edges",
+    "num_diff_edges",
+    "frnn_latency_ms",
+    "libfrnn_latency_ms",
+]
+
+
 class FRNNEval:
     def __init__(self, config: FRNNEvalConfig):
         self.config = config
@@ -163,20 +186,46 @@ class FRNNEval:
         self.num_saved += 1
         return out_path
 
-    def __call__(self, node_features: torch.Tensor) -> int:
+    def save_metrics(self, metrics: dict) -> None:
+        # One file per process, so multiple model instances never write to the same file.
+        self.config.output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = self.config.output_dir / f"eval_metrics_pid{os.getpid()}.csv"
+        write_header = not out_path.exists()
+        with open(out_path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=EVAL_METRICS_COLUMNS)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(metrics)
+
+    def __call__(self, node_features: torch.Tensor, request_id: str = "") -> int:
         """Return 0 if both libraries agree, otherwise the number of differing edges."""
         embedding = self.embed(node_features)
         if not torch.isfinite(embedding).all():
             raise ValueError("embedding contains NaN or infinity")
 
-        edges_frnn = build_edges_frnn(embedding, self.config.r_max, self.config.k_max)
-        edges_libfrnn = build_edges_libfrnn(embedding, self.config.r_max, self.config.k_max)
+        r_max, k_max = self.config.r_max, self.config.k_max
+        edges_frnn, frnn_latency = timed(build_edges_frnn, embedding, r_max, k_max)
+        edges_libfrnn, libfrnn_latency = timed(build_edges_libfrnn, embedding, r_max, k_max)
         num_diff = count_different_edges(edges_frnn, edges_libfrnn, embedding.shape[0])
 
         if self.config.debug:
             print(
-                f"{embedding.shape[0]:,} nodes, FRNN {edges_frnn.shape[1]:,} edges, "
-                f"libFRNN {edges_libfrnn.shape[1]:,} edges, {num_diff:,} differ"
+                f"{embedding.shape[0]:,} nodes, "
+                f"FRNN {edges_frnn.shape[1]:,} edges in {frnn_latency:.2f} ms, "
+                f"libFRNN {edges_libfrnn.shape[1]:,} edges in {libfrnn_latency:.2f} ms, "
+                f"{num_diff:,} differ"
+            )
+        if self.config.save_eval_metrics:
+            self.save_metrics(
+                {
+                    "request_id": request_id,
+                    "num_space_points": embedding.shape[0],
+                    "num_frnn_edges": edges_frnn.shape[1],
+                    "num_libfrnn_edges": edges_libfrnn.shape[1],
+                    "num_diff_edges": num_diff,
+                    "frnn_latency_ms": f"{frnn_latency:.3f}",
+                    "libfrnn_latency_ms": f"{libfrnn_latency:.3f}",
+                }
             )
         if num_diff:
             out_path = self.save(embedding, edges_frnn, edges_libfrnn, num_diff)
@@ -195,6 +244,9 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output-dir", default="frnn_eval_outputs")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")
+    parser.add_argument(
+        "-s", "--save-eval-metrics", action="store_true", help="Save performance metrics"
+    )
     args = parser.parse_args()
 
     evaluator = FRNNEval(
@@ -203,8 +255,9 @@ if __name__ == "__main__":
             output_dir=args.output_dir,
             auto_cast=args.auto_cast,
             debug=args.verbose,
+            save_eval_metrics=args.save_eval_metrics,
         )
     )
-    result = evaluator(torch.load(args.input))
+    result = evaluator(torch.load(args.input), request_id=Path(args.input).name)
     print("result", result)
     raise SystemExit(0 if result == 0 else 1)
