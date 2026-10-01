@@ -17,6 +17,7 @@ import pandas as pd
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.ticker import MaxNLocator  # noqa: E402
 
 # Fixed order: FRNN first, then one hue per libFRNN version.
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]
@@ -54,38 +55,52 @@ def summarize(points, tables):
     return series
 
 
-def plot(points, series, skip, out_path: Path):
+def style(ax):
+    ax.grid(axis="y", color="#e0e0e0", linewidth=0.8)
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+
+
+def plot(points, series, prefix: Path):
+    """Save the latency histogram and latency vs event size as two standalone PDFs.
+
+    No titles: in a paper the caption carries them, including that FRNN is the
+    per-event mean over all runs.
+    """
+    plt.rcParams.update({"pdf.fonttype": 42, "font.size": 10})  # TrueType fonts for journals
     n = points / 1e3
-    fig, (hist, scatter) = plt.subplots(1, 2, figsize=(13, 5))
+    labels = [name for name, _ in series]
+
+    fig, ax = plt.subplots(figsize=(5, 3.5))
     bins = np.linspace(min(y.min() for _, y in series) * 0.9,
                        max(y.max() for _, y in series) * 1.05, 45)
-    for (name, y), color in zip(series, COLORS):
-        if name == "FRNN" and len(series) > 2:
-            name = "FRNN (mean of all runs)"
-        hist.hist(y, bins=bins, color=color, alpha=0.6, edgecolor="white", linewidth=1,
-                  label=f"{name}: median {np.median(y):.0f} ms")
-        hist.axvline(np.median(y), color=color, linestyle="--", linewidth=2)
-        scatter.scatter(n, y, s=36, color=color, edgecolor="white", linewidth=1,
-                        label=name, zorder=3)
-        slope, offset = np.polyfit(n, y, 1)
-        xs = np.array([n.min(), n.max()])
-        scatter.plot(xs, slope * xs + offset, color=color, linewidth=2, zorder=2)
-
-    excluded = f" (first {skip} excluded)" if skip else ""
-    hist.set(xlabel="Latency [ms]", ylabel="Requests")
-    hist.set_title(f"Latency, {len(points)} events{excluded}", loc="left")
-    hist.set_ylim(top=hist.get_ylim()[1] * 1.1)
-    scatter.set(xlabel="Space points [thousands]", ylabel="Latency [ms]", ylim=(0, None))
-    scatter.set_title("Latency vs event size", loc="left")
-    for ax in (hist, scatter):
-        ax.grid(axis="y", color="#e0e0e0", linewidth=0.8)
-        ax.set_axisbelow(True)
-        for side in ("top", "right"):
-            ax.spines[side].set_visible(False)
-        ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.15))
+    for (_, y), label, color in zip(series, labels, COLORS):
+        ax.hist(y, bins=bins, color=color, alpha=0.6, edgecolor="white", linewidth=0.8,
+                label=f"{label} (median {np.median(y):.0f} ms)")
+        ax.axvline(np.median(y), ymax=0.76, color=color, linestyle="--", linewidth=1.5)
+    ax.set(xlabel="Latency [ms]", ylabel="Events")
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_ylim(top=ax.get_ylim()[1] * 1.3)  # room for the legend
+    style(ax)
+    ax.legend(frameon=False, loc="upper right", fontsize=8)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    print(f"saved {out_path}")
+    fig.savefig(f"{prefix}_hist.pdf")
+    print(f"saved {prefix}_hist.pdf")
+
+    fig, ax = plt.subplots(figsize=(5, 3.5))
+    for (_, y), label, color in zip(series, labels, COLORS):
+        slope, offset = np.polyfit(n, y, 1)
+        ax.scatter(n, y, s=20, color=color, edgecolor="white", linewidth=0.6,
+                   label=f"{label}: {slope:.2f} ms per 1k points", zorder=3)
+        xs = np.array([n.min(), n.max()])
+        ax.plot(xs, slope * xs + offset, color=color, linewidth=1.5, zorder=2)
+    ax.set(xlabel="Space points [thousands]", ylabel="Latency [ms]", ylim=(0, None))
+    style(ax)
+    ax.legend(frameon=False, loc="upper left", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(f"{prefix}_vs_size.pdf")
+    print(f"saved {prefix}_vs_size.pdf")
 
 
 if __name__ == "__main__":
@@ -94,7 +109,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("runs", nargs="+", help="label=eval_metrics.csv, one per libFRNN version")
     parser.add_argument("-o", "--output", type=Path, default=None,
-                        help="output image (default: latency_compare_<labels>.png next to the first CSV)")
+                        help="output prefix; writes <prefix>_hist.pdf and <prefix>_vs_size.pdf "
+                        "(default: latency_compare_frnn_<labels> next to the first CSV)")
     parser.add_argument("--skip", type=int, default=1,
                         help="leading requests to drop as CUDA warm-up (default: 1)")
     args = parser.parse_args()
@@ -103,6 +119,6 @@ if __name__ == "__main__":
 
     points, tables = load(args.runs, args.skip)
     series = summarize(points, tables)
-    out = args.output or Path(args.runs[0].partition("=")[2]).with_name(
-        f"latency_compare_frnn_{'_'.join(tables)}.png")
-    plot(points, series, args.skip, out)
+    prefix = args.output or Path(args.runs[0].partition("=")[2]).with_name(
+        f"latency_compare_frnn_{'_'.join(tables)}")
+    plot(points, series, prefix)

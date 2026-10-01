@@ -68,7 +68,7 @@ parameters: {
 # output_dir/data/<time>_pid<pid>_<n>/ for the libFRNN benchmarks.
 parameters: {
   key: "save_data",
-  value: {string_value: "True"}
+  value: {string_value: "False"}
 }
 
 # Record each library's peak GPU memory (frnn_peak_mem_mb, libfrnn_peak_mem_mb in the
