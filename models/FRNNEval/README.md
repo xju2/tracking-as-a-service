@@ -22,9 +22,17 @@ Parameters in `config.pbtxt`:
 - `save_eval_metrics`: if `True`, append one row per request to
   `output_dir/eval_metrics_pid<pid>.csv` (one file per model instance) with the columns
   `request_id`, `num_space_points`, `num_frnn_edges`, `num_libfrnn_edges`,
-  `num_diff_edges`, `frnn_latency_ms` and `libfrnn_latency_ms`. Latencies cover only
-  the edge building, bracketed by `torch.cuda.synchronize()`. The first request
-  includes one-time CUDA warm-up, so exclude it from timing studies.
+  `num_diff_edges`, `frnn_latency_ms`, `libfrnn_latency_ms`, `frnn_peak_mem_mb` and
+  `libfrnn_peak_mem_mb`. Latencies cover only the edge building, bracketed by
+  `torch.cuda.synchronize()`. The first request includes one-time CUDA warm-up, so
+  exclude it from timing studies. The memory columns are empty unless `measure_memory`
+  is on.
+- `measure_memory`: if `True`, run both libraries once more per request, untimed, and
+  record the peak GPU memory each needs on top of what was already in use, including
+  the output edge list. PyTorch's peak counter covers memory PyTorch allocates; memory
+  allocated with raw `cudaMalloc` (libFRNN's per-call workspace) is sampled from a
+  background thread as device memory in use minus PyTorch's reserved memory, so other
+  processes on the same GPU add noise. Use a dedicated GPU for memory studies.
 - `save_data`: if `True`, save every event (not only disagreeing ones) for the libFRNN
   benchmarks to `output_dir/data/<time>_pid<pid>_<n>/`:
   - `embedding.npy`: float32 `[N, D]`, C order, the exact tensor fed to both libraries.
@@ -59,4 +67,5 @@ cd models/FRNNEval/1
 python frnn_eval.py -i /global/cfs/cdirs/m3443/data/for_alina/all_input_node_features.pt -v
 # add -s to also write eval_metrics_pid<pid>.csv to the output directory (-o)
 # add -d to also save the embedding and edge lists as .npy under <output-dir>/data/
+# add -M to also record peak GPU memory (printed with -v, saved with -s)
 ```

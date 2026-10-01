@@ -11,6 +11,7 @@ import csv
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,8 @@ class FRNNEvalConfig:
     save_eval_metrics: bool = False
     # Save every event's embedding and edge lists under output_dir/data/ for libFRNN.
     save_data: bool = False
+    # Record each library's peak GPU memory in an extra, untimed pass (see peak_memory_mb).
+    measure_memory: bool = False
     r_max: float = 0.12
     k_max: int = 1000
     embedding_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2"
@@ -121,6 +124,42 @@ def timed(fn, *args):
     return result, (time.perf_counter() - start) * 1000.0
 
 
+def peak_memory_mb(fn, *args, device) -> float:
+    """Run fn and return the peak GPU memory in MB it needs on top of what was in use.
+
+    PyTorch's peak counter is exact for memory PyTorch allocates (both edge lists and
+    the original FRNN's buffers) but misses raw cudaMalloc, such as libFRNN's
+    per-call workspace. That part is sampled from a background thread as the device
+    memory in use minus what PyTorch has reserved, so other processes on the same GPU
+    add noise. The sampler competes with fn for the GIL, hence the separate pass.
+    """
+    def non_torch_bytes():
+        free, total = torch.cuda.mem_get_info(device)
+        return total - free - torch.cuda.memory_reserved(device)
+
+    torch.cuda.synchronize(device)
+    torch.cuda.reset_peak_memory_stats(device)
+    torch_base = torch.cuda.memory_allocated(device)
+    non_torch_base = non_torch_peak = non_torch_bytes()
+    done = threading.Event()
+
+    def sample():
+        nonlocal non_torch_peak
+        while not done.is_set():
+            non_torch_peak = max(non_torch_peak, non_torch_bytes())
+
+    sampler = threading.Thread(target=sample, daemon=True)
+    sampler.start()
+    try:
+        fn(*args)
+        torch.cuda.synchronize(device)
+    finally:
+        done.set()
+        sampler.join()
+    torch_peak = torch.cuda.max_memory_allocated(device) - torch_base
+    return (torch_peak + max(non_torch_peak - non_torch_base, 0)) / 2**20
+
+
 EVAL_METRICS_COLUMNS = [
     "request_id",
     "num_space_points",
@@ -129,6 +168,8 @@ EVAL_METRICS_COLUMNS = [
     "num_diff_edges",
     "frnn_latency_ms",
     "libfrnn_latency_ms",
+    "frnn_peak_mem_mb",
+    "libfrnn_peak_mem_mb",
 ]
 
 
@@ -242,6 +283,13 @@ class FRNNEval:
         edges_frnn, frnn_latency = timed(build_edges_frnn, embedding, r_max, k_max)
         edges_libfrnn, libfrnn_latency = timed(build_edges_libfrnn, embedding, r_max, k_max)
         num_diff = count_different_edges(edges_frnn, edges_libfrnn, embedding.shape[0])
+        frnn_mem = libfrnn_mem = None
+        if self.config.measure_memory:
+            device = embedding.device
+            frnn_mem = peak_memory_mb(build_edges_frnn, embedding, r_max, k_max, device=device)
+            libfrnn_mem = peak_memory_mb(
+                build_edges_libfrnn, embedding, r_max, k_max, device=device
+            )
 
         if self.config.debug:
             print(
@@ -250,6 +298,8 @@ class FRNNEval:
                 f"libFRNN {edges_libfrnn.shape[1]:,} edges in {libfrnn_latency:.2f} ms, "
                 f"{num_diff:,} differ"
             )
+            if self.config.measure_memory:
+                print(f"peak GPU memory: FRNN {frnn_mem:,.1f} MB, libFRNN {libfrnn_mem:,.1f} MB")
         if self.config.save_eval_metrics:
             self.save_metrics(
                 {
@@ -260,6 +310,8 @@ class FRNNEval:
                     "num_diff_edges": num_diff,
                     "frnn_latency_ms": f"{frnn_latency:.3f}",
                     "libfrnn_latency_ms": f"{libfrnn_latency:.3f}",
+                    "frnn_peak_mem_mb": "" if frnn_mem is None else f"{frnn_mem:.1f}",
+                    "libfrnn_peak_mem_mb": "" if libfrnn_mem is None else f"{libfrnn_mem:.1f}",
                 }
             )
         if self.config.save_data:
@@ -289,6 +341,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "-d", "--save-data", action="store_true", help="Save embedding and edge lists as .npy"
     )
+    parser.add_argument(
+        "-M", "--measure-memory", action="store_true", help="Record peak GPU memory"
+    )
     args = parser.parse_args()
 
     evaluator = FRNNEval(
@@ -299,6 +354,7 @@ if __name__ == "__main__":
             debug=args.verbose,
             save_eval_metrics=args.save_eval_metrics,
             save_data=args.save_data,
+            measure_memory=args.measure_memory,
         )
     )
     result = evaluator(torch.load(args.input), request_id=Path(args.input).name)

@@ -49,6 +49,7 @@ class TritonPythonModel:
             debug=get_parameter("debug").lower() == "true",
             save_eval_metrics=get_parameter("save_eval_metrics").lower() == "true",
             save_data=get_parameter("save_data").lower() == "true",
+            measure_memory=get_parameter("measure_memory").lower() == "true",
             r_max=float(get_parameter("r_max")),
             k_max=int(get_parameter("k_max")),
         )

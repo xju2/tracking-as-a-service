@@ -71,6 +71,13 @@ parameters: {
   value: {string_value: "True"}
 }
 
+# Record each library's peak GPU memory (frnn_peak_mem_mb, libfrnn_peak_mem_mb in the
+# eval metrics CSV). Runs both libraries once more, untimed, per request.
+parameters: {
+  key: "measure_memory",
+  value: {string_value: "True"}
+}
+
 parameters: {
   key: "debug",
   value: {string_value: "False"}
