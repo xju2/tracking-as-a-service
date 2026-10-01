@@ -9,13 +9,14 @@ input [
   }
 ]
 
-# 0: the original FRNN and libFRNN produce the same edge list.
-# >0: number of edges found by only one of them.
+# Same output as MetricLearning so that clients (e.g. Athena) run unchanged.
+# Always the dummy labels [0, 1, 2, 3, 4, 5]; the comparison results go to
+# the server log and output_dir.
 output [
   {
-    name: "RESULT"
+    name: "LABELS"
     data_type: TYPE_INT64
-    dims: [ 1 ]
+    dims: [ -1 ]
   }
 ]
 
@@ -60,14 +61,14 @@ parameters: {
 # output_dir/eval_metrics_pid<pid>.csv.
 parameters: {
   key: "save_eval_metrics",
-  value: {string_value: "False"}
+  value: {string_value: "True"}
 }
 
 # Save every event's embedding and both edge lists as .npy files under
 # output_dir/data/<time>_pid<pid>_<n>/ for the libFRNN benchmarks.
 parameters: {
   key: "save_data",
-  value: {string_value: "False"}
+  value: {string_value: "True"}
 }
 
 parameters: {

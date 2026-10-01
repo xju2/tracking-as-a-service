@@ -13,8 +13,9 @@ from .frnn_eval import FRNNEval, FRNNEvalConfig
 
 class TritonPythonModel:
     """Run the MetricLearning embedding and compare the edge lists built by the
-    original FRNN and libFRNN. RESULT is 0 when they agree, otherwise the number of
-    differing edges. On disagreement, the embedding and both edge lists are saved.
+    original FRNN and libFRNN. On disagreement, the embedding and both edge lists are
+    saved. To mimic MetricLearning for clients such as Athena, LABELS is always the
+    dummy track candidates [0, 1, 2, 3, 4, 5, -1].
     """
 
     def initialize(self, args):
@@ -54,8 +55,9 @@ class TritonPythonModel:
         self.debug = config.debug
         self.evaluator = FRNNEval(config)
 
-        output0_config = pb_utils.get_output_config_by_name(model_config, "RESULT")
+        output0_config = pb_utils.get_output_config_by_name(model_config, "LABELS")
         self.output0_dtype = pb_utils.triton_string_to_numpy(output0_config["data_type"])
+        self.dummy_labels = np.arange(6, dtype=self.output0_dtype)
 
     def execute(self, requests):
         responses = []
@@ -65,23 +67,16 @@ class TritonPythonModel:
             if self.debug:
                 print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
 
+            # Errors are only logged: the client always gets the dummy labels.
             try:
-                result = (
-                    self.evaluator(features, request_id=request.request_id())
-                    if features.shape[0] > 2
-                    else 0
-                )
-            except Exception as error:  # report per request instead of killing the stub
-                responses.append(
-                    pb_utils.InferenceResponse(
-                        output_tensors=[], error=pb_utils.TritonError(str(error))
-                    )
-                )
-                continue
+                if features.shape[0] > 2:
+                    num_diff = self.evaluator(features, request_id=request.request_id())
+                    if num_diff > 0:
+                        print(f"request {request.request_id()}: {num_diff:,} differing edges")
+            except Exception as error:
+                print(f"request {request.request_id()} failed: {error}")
 
-            out_tensor_0 = pb_utils.Tensor(
-                "RESULT", np.array([result], dtype=self.output0_dtype)
-            )
+            out_tensor_0 = pb_utils.Tensor("LABELS", self.dummy_labels)
             responses.append(pb_utils.InferenceResponse(output_tensors=[out_tensor_0]))
         return responses
 

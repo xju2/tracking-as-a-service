@@ -5,9 +5,10 @@ It accepts the same `FEATURES` input as `MetricLearning` (`[N, 44]` FP32), runs 
 MetricLearning embedding, builds the radius graph with both the original FRNN
 (`frnn`) and libFRNN (`frnn_cuda`), and compares the two directed edge lists as sets.
 
-Output `RESULT` (INT64, shape `[1]`):
-- `0`: the edge lists agree.
-- `>0`: number of edges found by only one of the two libraries.
+Output `LABELS` (INT64, shape `[-1]`), the same as `MetricLearning` so that clients such
+as the Athena job run unchanged. It is always the dummy track candidates `[0, 1, 2, 3, 4, 5]`.
+The comparison results go to the server log (the number of differing edges is printed on
+disagreement) and to `output_dir`. Errors are logged and do not fail the request.
 
 On disagreement, the embedding and both edge lists are saved with `torch.save` to
 `output_dir/frnn_diff_<time>_pid<pid>_<n>.pt`, as a dict with keys `embedding`,
