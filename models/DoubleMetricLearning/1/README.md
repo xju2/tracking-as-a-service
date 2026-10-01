@@ -4,7 +4,7 @@ This document describes how to run the metric learning inference pipeline using 
 
 ## How to Run
 
-To run the inference script, use the following command from within the `models/DoubleMetricLearning/3` directory:
+To run the inference script, use the following command from within the `models/DoubleMetricLearning/1` directory:
 
 ```bash
 python inference.py -i <path_to_input_data> [options]
@@ -23,12 +23,3 @@ Here are example commands to run the inference with verbose output on a sample i
   ```bash
   time python inference.py -i ../all_input_node_features.pt -m . -v
   ```
-
----
-
-Debug information:
-Running on the event 6800 and printing the following information:
-
-```text
-
-```
