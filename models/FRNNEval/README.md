@@ -54,6 +54,12 @@ This model requires the image built from `Dockerfile.frnn-eval`:
 ```bash
 podman-hpc build --format docker -f Dockerfile.frnn-eval -t docexoty/frnn-eval .
 ```
+It builds libFRNN `main` by default. To evaluate a release, pass its git tag and give the
+image its own tag (the libFRNN ref is recorded in the image label `libfrnn_ref`):
+```bash
+podman-hpc build --format docker -f Dockerfile.frnn-eval \
+  --build-arg LIBFRNN_REF=v1.0.1 -t docexoty/frnn-eval:libfrnn-v1.0.1 .
+```
 and launched with it; `scripts/start-tritonserver.sh` defaults to an image without
 libFRNN, so pass `-i`:
 ```bash
