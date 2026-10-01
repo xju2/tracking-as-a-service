@@ -32,7 +32,7 @@ instance_group [
 # relative to this model's directory.
 parameters: {
   key: "embedding_model_dir",
-  value: {string_value: "../MetricLearning/4"}
+  value: {string_value: "../MetricLearning/1"}
 }
 
 # Where disagreeing events are saved, relative to the server's working directory.
