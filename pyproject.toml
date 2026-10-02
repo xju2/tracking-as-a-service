@@ -13,10 +13,44 @@ dependencies = [
   "torch>=2.8.0,<3",
   "torch-geometric>=2.6.1,<3",
   "numba>=0.62.1,<0.63",
+  "scipy>=1.15,<2",
+  "uproot>=5.6,<6",
+  "torch-scatter>=2.1.2,<3",
+  "frnn",
+  "prefix-sum",
 ]
 
 [dependency-groups]
 dev = ["pre-commit>=4.5.1,<5"]
+
+[tool.uv.sources]
+frnn = { git = "https://github.com/xju2/FRNN", rev = "9b57ef4a7c194e2f1372591d3ea33ab254295a51" }
+prefix-sum = { git = "https://github.com/asnaylor/prefix_sum", rev = "008f3239e3f3e65e48c04796d606c5595f2417bf" }
+
+# These CUDA extensions import torch at build time; build them against the locked torch.
+[tool.uv.extra-build-dependencies]
+torch-scatter = [{ requirement = "torch", match-runtime = true }]
+frnn = [{ requirement = "torch", match-runtime = true }]
+prefix-sum = [{ requirement = "torch", match-runtime = true }]
+
+[tool.uv.extra-build-variables]
+torch-scatter = { FORCE_CUDA = "1" }
+
+# Their setup.py imports torch, so uv cannot read their metadata without building them.
+[[tool.uv.dependency-metadata]]
+name = "torch-scatter"
+version = "2.1.2"
+requires-dist = []
+
+[[tool.uv.dependency-metadata]]
+name = "frnn"
+version = "0.0.0"
+requires-dist = []
+
+[[tool.uv.dependency-metadata]]
+name = "prefix-sum"
+version = "0.0.0"
+requires-dist = []
 
 
 [tool.ruff]

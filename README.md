@@ -57,4 +57,7 @@ srun --job-name=FRNNEval -C "gpu&hbm80g" -N 1 -G 1 -c 10 -n 1 -t 4:00:00 -A m344
 ```
 uv venv --python /global/common/software/nersc/pe/conda-envs/24.1.0/python-3.11/nersc-python/bin/python
 
-uv sync
+# torch-scatter, frnn and prefix-sum are built from source and need a C++20 compiler
+# (the system gcc 7 is too old) and nvcc.
+CC=gcc-13 CXX=g++-13 CUDAHOSTCXX=g++-13 TORCH_CUDA_ARCH_LIST=8.0 uv sync
+```
