@@ -65,7 +65,7 @@ def process_components(graph, labels, large_component_labels):
 
     assert torch.all(
         large_component_simple_path_mask | large_component_complex_path_mask | small_component_mask
-        == torch.ones_like(labels, dtype=torch.bool)
+        == torch.ones_like(labels, dtype=torch.bool, device=device)
     ), "Categorization is not complete and mutually exclusive"
 
     subgraph_simple_paths = graph.subgraph(large_component_simple_path_mask)
@@ -190,14 +190,14 @@ def max_add_cuts(graph, score_name, th_min, th_add):
     mask_add = edge_scores > th_add
 
     out, argmax = scatter_max(edge_scores, edge_index[0], dim=0)
-    mask_max = torch.zeros_like(mask_min, dtype=torch.bool)
+    mask_max = torch.zeros_like(mask_min, dtype=torch.bool, device=mask_min.device)
     mask_max[argmax[out >= th_min]] = True
 
     final_mask = mask_max | mask_add
 
     not_first_mask = torch.isin(edge_index[0], edge_index[1])
     out, argmax = scatter_max(edge_scores, edge_index[1], dim=0)
-    mask_imcoming_max = torch.zeros_like(mask_min, dtype=torch.bool)
+    mask_imcoming_max = torch.zeros_like(mask_min, dtype=torch.bool, device=mask_min.device)
     mask_imcoming_max[argmax[argmax < len(mask_imcoming_max)]] = True
     final_mask = (not_first_mask | mask_imcoming_max) & final_mask
 

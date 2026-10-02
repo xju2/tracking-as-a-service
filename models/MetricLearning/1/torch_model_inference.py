@@ -12,13 +12,13 @@ def check_autocast_support(device_type: str):
 
 def run_torch_model(model: torch.nn.Module, auto_cast: bool, *inputs):
     assert len(inputs) > 0, "At least one input must be provided."
-    with torch.no_grad():
+    with torch.inference_mode():
         device_type = inputs[0].device.type
         if auto_cast and check_autocast_support(device_type):
             with torch.autocast(device_type, dtype=dtype):
-                output = model(*inputs)
+                output = model(*inputs).clone() # .to(torch.float32)
         else:
-            output = model(*inputs)
+            output = model(*inputs).clone()
     return output
 
 
@@ -29,24 +29,24 @@ def run_gnn_filter(
     x: torch.Tensor,
     edge_index: torch.Tensor,
 ):
-    with torch.no_grad():
+    with torch.inference_mode():
         sorted_edge_index = sort_edge_index(edge_index, sort_by_row=False)
         device_type = x.device.type
         if auto_cast and check_autocast_support(device_type):
             with torch.autocast(device_type, dtype=dtype):
-                gnn_embedding = model.gnn(x, sorted_edge_index)
+                gnn_embedding = model.gnn(x, sorted_edge_index).clone()
                 filter_scores = [
                     model.net(
                         torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
-                    ).squeeze(-1)
+                    ).squeeze(-1).clone()
                     for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
                 ]
         else:
-            gnn_embedding = model.gnn(x, sorted_edge_index)
+            gnn_embedding = model.gnn(x, sorted_edge_index).clone()
             filter_scores = [
                 model.net(
                     torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
-                ).squeeze(-1)
+                ).squeeze(-1).clone()
                 for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
             ]
     filter_scores = torch.cat(filter_scores).sigmoid()

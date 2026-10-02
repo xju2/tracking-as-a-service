@@ -55,6 +55,6 @@ srun --job-name=FRNNEval -C "gpu&hbm80g" -N 1 -G 1 -c 10 -n 1 -t 4:00:00 -A m344
 
 ### Install packages.
 ```
-poetry env use /global/common/software/nersc/pe/conda-envs/24.1.0/python-3.11/nersc-python/bin/python
+uv venv --python /global/common/software/nersc/pe/conda-envs/24.1.0/python-3.11/nersc-python/bin/python
 
-poetry install --no-root
+uv sync

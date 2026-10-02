@@ -6,6 +6,43 @@ from functools import partial
 import networkx as nx
 
 
+def remove_cycles(graph):
+    """
+    Remove cycles from the graph, simply by pointing all edges outwards
+    """
+
+    R = graph.hit_r**2 + graph.hit_z**2
+    edge_flip_mask = (R[graph.edge_index[0]] > R[graph.edge_index[1]]) | (
+        (R[graph.edge_index[0]] == R[graph.edge_index[1]])
+        & (graph.edge_index[0] > graph.edge_index[1])
+    )
+    graph.edge_index[:, edge_flip_mask] = graph.edge_index[:, edge_flip_mask].flip(0)
+
+    return graph
+
+
+def topological_sort_graph(G):
+    """
+    Sort Topologcially the graph such node u appears befroe v if the connection is u->v
+    This ordering is valid only if the graph has no directed cycles
+    """
+    H = nx.DiGraph()
+    # Add nodes w/o any features attached
+    # maybe this is not needed given line 48?
+    H.add_nodes_from(nx.topological_sort(G))
+
+    # put it after the add nodes
+    H.add_edges_from(G.edges(data=True))
+    sorted_nodes = []
+
+    # Add corresponding nodes features
+    for i in list(nx.topological_sort(G)):
+        sorted_nodes.append((i, G.nodes[i]))
+    H.add_nodes_from(sorted_nodes)
+
+    return H
+
+
 def find_next_hits(
     G: nx.DiGraph,
     current_hit: int,
@@ -14,8 +51,7 @@ def find_next_hits(
     th_min: float,
     th_add: float,
 ):
-    """
-    Find what are the next hits we keep to build trakc candidates
+    """Find what are the next hits we keep to build trakc candidates
     G : the graph (usually pre-filtered)
     current_hit : index of the current_hit considered
     used_hits : a set of already used hits (to avoid re-using them)
@@ -61,14 +97,14 @@ def find_next_hits(
 def build_roads(G, starting_node, next_hit_fn, used_hits: set) -> list[tuple]:
     """Build roads starting from a given node.
 
-    Args
+    Args:
     ----
         G : nx.DiGraph, the input graph after GNN.
         starting_node : int, the starting node.
         next_hit_fn : callable, the function to find the next hit.
         used_hits : set, the set of used hits.
 
-    Returns
+    Returns:
     -------
         path : list of list, the list of possible paths starting from the given node.
     """
@@ -106,7 +142,7 @@ def build_roads(G, starting_node, next_hit_fn, used_hits: set) -> list[tuple]:
     return path
 
 
-def get_tracks(G, th_min, th_add, score_name):
+def walk_through(G, score_name, th_min, th_add, *args, **kwargs):
     """Run walkthrough and return subgraphs."""
     used_nodes = set()
     sub_graphs = []
