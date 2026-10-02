@@ -16,20 +16,9 @@ def run_torch_model(model: torch.nn.Module, auto_cast: bool, *inputs):
         device_type = inputs[0].device.type
         if auto_cast and check_autocast_support(device_type):
             with torch.autocast(device_type, dtype=dtype):
-                output = model(*inputs)
-                if isinstance(output, tuple):
-                    return tuple(o.clone() for o in output)
-                else:
-                    return output.clone()  # .to(torch.float32)
-                # print("compiled amp:", timed(lambda: model(*inputs))[1])
+                return model(*inputs)
         else:
-            output = model(*inputs)
-            if isinstance(output, tuple):
-                return tuple(o.clone() for o in output)
-            else:
-                return output.clone()  # .to(torch.float32)
-            # print("compiled:", timed(lambda: model(*inputs))[1])
-    return output
+            return model(*inputs)
 
 
 def run_gnn_filter(
@@ -44,21 +33,19 @@ def run_gnn_filter(
         device_type = x.device.type
         if auto_cast and check_autocast_support(device_type):
             with torch.autocast(device_type, dtype=dtype):
-                gnn_embedding = model.gnn(x, sorted_edge_index).clone()
+                gnn_embedding = model.gnn(x, sorted_edge_index)
                 filter_scores = [
                     model.net(
                         torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1)
                     )
                     .squeeze(-1)
-                    .clone()
                     for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
                 ]
         else:
-            gnn_embedding = model.gnn(x, sorted_edge_index).clone()
+            gnn_embedding = model.gnn(x, sorted_edge_index)
             filter_scores = [
                 model.net(torch.cat([gnn_embedding[subset[0]], gnn_embedding[subset[1]]], dim=-1))
                 .squeeze(-1)
-                .clone()
                 for subset in torch.tensor_split(sorted_edge_index, batches, dim=1)
             ]
     filter_scores = torch.cat(filter_scores).sigmoid()

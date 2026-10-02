@@ -173,17 +173,19 @@ class MetricLearningInference:
             torch.set_float32_matmul_precision("high")
             # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
             self.embedding_model = torch.compile(
-                self.embedding_model, dynamic=True, mode="max-autotune"
+                self.embedding_model, dynamic=True, mode="max-autotune-no-cudagraphs"
             )
             # # Compile GNNFilter
             self.filter_model.gnn = torch.compile(
-                self.filter_model.gnn, dynamic=True, mode="max-autotune"
+                self.filter_model.gnn, dynamic=True, mode="max-autotune-no-cudagraphs"
             )
             self.filter_model.net = torch.compile(
-                self.filter_model.net, dynamic=True, mode="max-autotune"
+                self.filter_model.net, dynamic=True, mode="max-autotune-no-cudagraphs"
             )
             # # Compile interaction gnn
-            self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
+            self.gnn_model = torch.compile(
+                self.gnn_model, dynamic=True, mode="max-autotune-no-cudagraphs"
+            )
             # self.embedding_model.eval()
             # self.filter_model.eval()
             # self.gnn_model.eval()
