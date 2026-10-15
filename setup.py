@@ -17,7 +17,8 @@ def prepare_patched_modulemapgraph(repo_root, source_root):
 
     patch_path = os.path.join(
         repo_root,
-        "taas_cuda_ext",
+        "taas",
+        "cuda_ext",
         "mmg_patches",
         "no_root_guards.patch",
     )
@@ -66,7 +67,7 @@ def get_extension_config():
         "nvcc": ["-O3", "--use_fast_math", "--std=c++20", "-DTAAS_MMG_NO_ROOT"],
     }
     repo_root = os.path.abspath(os.path.dirname(__file__))
-    extension_root = os.path.join(repo_root, "taas_cuda_ext")
+    extension_root = os.path.join(repo_root, "taas", "cuda_ext")
     modulemapgraph_root = os.environ.get(
         "TAAS_MODULEMAPGRAPH_ROOT",
         os.path.join(extension_root, "modulemapgraph"),
@@ -83,7 +84,7 @@ def get_extension_config():
     ]
     extensions = [
         CUDAExtension(
-            name="taas_cuda_ext._connected_components_cuda",
+            name="taas.cuda_ext._connected_components_cuda",
             sources=[
                 f"{extension_root}/connected_components.cpp",
                 f"{extension_root}/connected_components_kernel.cu",
@@ -91,7 +92,7 @@ def get_extension_config():
             extra_compile_args=compile_args,
         ),
         CUDAExtension(
-            name="taas_cuda_ext._reverse_topological_dp_cuda",
+            name="taas.cuda_ext._reverse_topological_dp_cuda",
             sources=[
                 f"{extension_root}/reverse_topological_dp.cpp",
                 f"{extension_root}/reverse_topological_dp_kernel.cu",
@@ -99,7 +100,7 @@ def get_extension_config():
             extra_compile_args=compile_args,
         ),
         CUDAExtension(
-            name="taas_cuda_ext._trace_selected_paths_cuda",
+            name="taas.cuda_ext._trace_selected_paths_cuda",
             sources=[
                 f"{extension_root}/trace_selected_paths.cpp",
                 f"{extension_root}/trace_selected_paths_kernel.cu",
@@ -107,7 +108,7 @@ def get_extension_config():
             extra_compile_args=compile_args,
         ),
         CUDAExtension(
-            name="taas_cuda_ext._edge_layer_connector_cuda",
+            name="taas.cuda_ext._edge_layer_connector_cuda",
             sources=[
                 f"{extension_root}/edge_layer_connector.cu",
             ],
@@ -143,7 +144,7 @@ def get_extension_config():
         onnxruntime_lib = os.path.join(onnxruntime_root, "lib")
         extensions.append(
             CppExtension(
-                name="taas_cuda_ext._modulemap_dependency_probe",
+                name="taas.cuda_ext._modulemap_dependency_probe",
                 sources=[
                     f"{extension_root}/modulemap_dependency_probe.cpp",
                 ],
@@ -188,7 +189,7 @@ def get_extension_config():
         root_lib = os.path.join(rootsys, "lib")
         extensions.append(
             CUDAExtension(
-                name="taas_cuda_ext._module_map_graph_cuda",
+                name="taas.cuda_ext._module_map_graph_cuda",
                 sources=[
                     f"{extension_root}/module_map_graph.cu",
                 ],
@@ -234,10 +235,25 @@ def get_extension_config():
 ext_modules, cmdclass = get_extension_config()
 
 setup(
-    packages=["taas_cuda_ext", "taas_graph_segmentation"],
+    packages=[
+        "taas",
+        "taas.cuda_ext",
+        "taas.edge_classification",
+        "taas.graph_construction",
+        "taas.graph_segmentation",
+        "taas.model_loading",
+        "taas.torch_models",
+        "taas.triton",
+    ],
     package_dir={
-        "taas_cuda_ext": "taas_cuda_ext",
-        "taas_graph_segmentation": "taas_graph_segmentation",
+        "taas": "taas",
+        "taas.cuda_ext": "taas/cuda_ext",
+        "taas.edge_classification": "taas/edge_classification",
+        "taas.graph_construction": "taas/graph_construction",
+        "taas.graph_segmentation": "taas/graph_segmentation",
+        "taas.model_loading": "taas/model_loading",
+        "taas.torch_models": "taas/torch_models",
+        "taas.triton": "taas/triton",
     },
     ext_modules=ext_modules,
     cmdclass=cmdclass,

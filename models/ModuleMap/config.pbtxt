@@ -67,7 +67,7 @@ parameters: {
 # options: dwalk, edge_layer_connector, acts_junction_removal, fastwalk
 parameters: {
   key: "graph_segmentation_method"
-  value: {string_value: "fastwalk"}
+  value: {string_value: "dwalk"}
 }
 
 parameters: {

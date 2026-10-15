@@ -4,45 +4,19 @@ import operator
 from functools import partial
 from pathlib import Path
 
-import frnn
+from taas.graph_construction.metric_learning import MetricLearningGraphConstructor
+
+build_edges = MetricLearningGraphConstructor.build_edges
 import networkx as nx
 import numpy as np
 import torch
 from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
 
-import fastwalkthrough as walkutils
+from taas.graph_segmentation import fastwalkthrough as walkutils
 
 torch.manual_seed(42)
 
-
-def build_edges(
-    query: torch.Tensor,
-    database: torch.Tensor,
-    r_max: float = 0.1,
-    k_max: int = 1000,
-) -> torch.Tensor:
-    # Compute edges
-    _, idxs, _, _ = frnn.frnn_grid_points(
-        points1=query.unsqueeze(0),
-        points2=database.unsqueeze(0),
-        lengths1=None,
-        lengths2=None,
-        K=k_max,
-        r=r_max,
-        grid=None,
-        return_nn=False,
-        return_sorted=True,
-    )
-
-    idxs: torch.Tensor = idxs.squeeze().int()
-    ind = torch.arange(idxs.shape[0], device=query.device).repeat(idxs.shape[1], 1).T.int()
-    positive_idxs = idxs >= 0
-    edge_list = torch.stack([ind[positive_idxs], idxs[positive_idxs]]).long()
-
-    # Remove self-loops
-    edge_list = edge_list[:, edge_list[0] != edge_list[1]]
-    return edge_list
 
 
 def calc_eta(r, z):
@@ -219,7 +193,8 @@ class MetricLearningInference:
         all_trkx = {}
         all_trkx["cc"], graph = walkutils.get_simple_path(graph)
         all_trkx["walk"] = walkutils.walk_through(
-            graph, score_name, self.walk_min, self.walk_max, self.cc_cut
+            graph, score_name, self.walk_min, self.walk_max, self.cc_cut,
+            profile=walkutils.FastWalkthroughProfile.LEGACY_LONGEST,
         )
         if self.debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
