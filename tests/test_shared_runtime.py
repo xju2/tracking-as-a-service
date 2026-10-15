@@ -152,6 +152,19 @@ class ConsolidationContractTest(unittest.TestCase):
         self.assertIn("class ModuleMapInference", inference_source)
         self.assertNotIn("triton_python_backend_utils", inference_source)
 
+    def test_frnn_eval_uses_shared_metric_runtime(self):
+        source = (REPO_ROOT / "models/FRNNEval/1/frnn_eval.py").read_text()
+        self.assertIn(
+            "from taas.torch_models.metric_learning import MetricLearning",
+            source,
+        )
+        self.assertIn(
+            "from taas.edge_classification.filter import run_torch_model",
+            source,
+        )
+        self.assertNotIn("from metric_learning import MetricLearning", source)
+        self.assertNotIn("from torch_model_inference import run_torch_model", source)
+
 
 
 class TritonConfigContractTest(unittest.TestCase):

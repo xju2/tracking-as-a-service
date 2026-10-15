@@ -10,13 +10,15 @@ from __future__ import annotations
 import csv
 import json
 import os
-import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+
+from taas.edge_classification.filter import run_torch_model
+from taas.torch_models.metric_learning import MetricLearning
 
 
 @dataclass
@@ -177,12 +179,6 @@ class FRNNEval:
     def __init__(self, config: FRNNEvalConfig):
         self.config = config
         print(self.config)
-
-        model_dir = str(self.config.embedding_model_dir.resolve())
-        if model_dir not in sys.path:
-            sys.path.insert(0, model_dir)
-        from metric_learning import MetricLearning
-        from torch_model_inference import run_torch_model
 
         self.run_torch_model = run_torch_model
 
