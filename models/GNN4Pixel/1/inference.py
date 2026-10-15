@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import operator
+from functools import partial
 from pathlib import Path
 
 from taas.graph_construction.metric_learning import MetricLearningGraphConstructor
@@ -9,26 +11,31 @@ import networkx as nx
 import numpy as np
 import torch
 from torch_geometric.data import Data
-from torch_geometric.utils import to_networkx
+from torch_geometric.transforms import RemoveIsolatedNodes
 
-from taas.graph_segmentation.networkx_walkthrough import get_simple_path, get_tracks
+from taas.graph_segmentation import fastwalkthrough as walkutils
 
+torch.manual_seed(42)
+
+
+
+def calc_eta(r, z):
+    theta = torch.arctan2(r, z)
+    return -1.0 * torch.log(torch.tan(theta / 2.0))
 
 
 class MetricLearningInference:
     def __init__(
         self,
         model_path: str,
-        r_max: float = 0.1,
-        k_max: int = 300,
+        r_max: float = 0.10,
+        k_max: int = 1000,
         filter_cut: float = 0.2,
         filter_batches: int = 10,
         cc_cut: float = 0.01,
         walk_min: float = 0.1,
         walk_max: float = 0.6,
         device: str = "cuda",
-        r_index: int = 0,
-        z_index: int = 2,
         debug: bool = False,
         node_feature_names: str = "r,phi,z,cluster_x_1,cluster_y_1,cluster_z_1,charge_count_1,count_1,loc_eta_1,loc_phi_1,glob_eta_1,glob_phi_1,localDir0_1,localDir1_1,localDir2_1",  # noqa: E501
         node_feature_scales: str = "300, 3.15, 3000, 300, 300, 3000, 30, 20, -2, 1.5, 2, 3.15, 1, 1, 1",  # noqa: E501
@@ -42,11 +49,11 @@ class MetricLearningInference:
         self.walk_min = walk_min
         self.walk_max = walk_max
         self.device = device
-        self.r_index = r_index
-        self.z_index = z_index
         self.debug = debug
         self.node_feature_names = [x.strip() for x in node_feature_names.split(",")]
         self.node_feature_scales = [float(x.strip()) for x in node_feature_scales.split(",")]
+        self.r_index = self.node_feature_names.index("r")
+        self.z_index = self.node_feature_names.index("z")
 
         embedding_path = model_path / "embedding.pt"
         filtering_path = model_path / "filter.pt"
@@ -62,6 +69,7 @@ class MetricLearningInference:
 
         node_features /= torch.tensor(self.node_feature_scales, device=self.device)
 
+        track_candidates = np.array([-1], dtype=np.int64)
         if hit_id is None:
             hit_id = torch.arange(node_features.shape[0], device=self.device)
 
@@ -79,6 +87,16 @@ class MetricLearningInference:
         if self.debug:
             print(f"Number of edges after embedding: {edge_index.shape[1]:,}")
 
+        # order edges by their distances from collision point,
+        # and remove duplicated edges.
+        R = node_features[:, self.r_index] ** 2 + node_features[:, self.z_index] ** 2
+        edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
+        edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
+        edge_index = torch.unique(edge_index, dim=-1)
+
+        if self.debug:
+            print(f"after removing duplications: {edge_index.shape[1]:,}")
+
         # Filtering
         with torch.no_grad():
             edge_score = [
@@ -87,17 +105,14 @@ class MetricLearningInference:
             ]
 
         edge_score = torch.cat(edge_score).sigmoid()
-        edge_index = edge_index[:, edge_score > self.filter_cut]
+        edge_index = edge_index[:, edge_score >= self.filter_cut]
+        if edge_index.shape[1] < 2:
+            return track_candidates
+
         if self.debug:
             print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
 
         # GNN
-        # rearrange the edges by their distances from collision point.
-        R = node_features[:, self.r_index] ** 2 + node_features[:, self.z_index] ** 2
-        edge_flip_mask = R[edge_index[0]] > R[edge_index[1]]
-        edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
-
-        # apply GNN
         with torch.no_grad():
             edge_score = self.gnn_model(node_features, edge_index)
         edge_score = edge_score.sigmoid()
@@ -106,34 +121,33 @@ class MetricLearningInference:
         if self.debug:
             print("After GNN...")
 
+        good_edge_mask = edge_score > self.cc_cut
+        edge_index = edge_index[:, good_edge_mask]
+        edge_score = edge_score[good_edge_mask]
+        del good_edge_mask
+
         score_name = "edge_score"
         graph = Data(
-            x=node_features,
+            R=R,
             edge_index=edge_index,
             hit_id=hit_id,
-            edge_score=edge_score,
-        )
-        G = to_networkx(graph, ["hit_id"], [score_name], to_undirected=False)
-
-        # Remove edges below threshold
-        list_fake_edges = [(u, v) for u, v, e in G.edges(data=True) if e[score_name] <= self.cc_cut]
-        G.remove_edges_from(list_fake_edges)
-
-        G.remove_nodes_from(list(nx.isolates(G)))
-        # print(f"After removing fake edges; Number of nodes
-        # = {G.number_of_nodes():,}, number of edges = {G.number_of_edges():,}")
+            num_nodes=node_features.shape[0],
+        ).to(self.device)
+        graph[score_name] = edge_score
+        graph = RemoveIsolatedNodes()(graph)
 
         all_trkx = {}
-        all_trkx["cc"], G = get_simple_path(G)
-        all_trkx["walk"] = get_tracks(G, self.walk_min, self.walk_max, score_name)
+        all_trkx["cc"], graph = walkutils.get_simple_path(graph)
+        all_trkx["walk"] = walkutils.walk_through(
+            graph, score_name, self.walk_min, self.walk_max, self.cc_cut,
+            profile=walkutils.FastWalkthroughProfile.LEGACY_LONGEST,
+        )
         if self.debug:
             print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
             print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
 
-        # label each hits.
-        track_candidates = np.array([
-            item for track in all_trkx["cc"] + all_trkx["walk"] for item in [*track, -1]
-        ])
+        tracks = all_trkx["cc"] + list(all_trkx["walk"])
+        track_candidates = np.array([item for track in tracks for item in [*track, -1]])
         return track_candidates
 
     def __call__(self, node_features: torch.Tensor, hit_id: torch.Tensor | None = None):
@@ -147,7 +161,7 @@ if __name__ == "__main__":
     add_arg = parser.add_argument("-i", "--input", type=str, default="node_features.pt")
 
     args = parser.parse_args()
-    inference = MetricLearningInference(model_path="./", r_max=0.11, debug=True)
-    node_features = torch.load(args.input)
+    inference = MetricLearningInference(model_path="./", debug=True)
+    node_features = torch.load(args.input).float()
     track_ids = inference(node_features)
     print(track_ids)

@@ -42,9 +42,27 @@ Supported models are saved in the [model_repos](model_repos) directory.
 podman-hpc build --format docker -f Dockerfile -t docexoty/tritonserver
 ```
 
+The `frnn-eval` image adds [libFRNN](https://github.com/xju2/libFRNN) on top of it,
+for the [FRNNEval](models/FRNNEval/README.md) validation model:
+```bash
+podman-hpc build --format docker -f Dockerfile.frnn-eval -t docexoty/frnn-eval .
+```
+
+FRNNEval needs `frnn_cuda`, which only this image provides. Make the image available
+on compute nodes and launch the server with it (`-i`); the default image lacks libFRNN
+and every FRNNEval request would fail:
+```bash
+podman-hpc migrate docexoty/frnn-eval
+srun --job-name=FRNNEval -C "gpu&hbm80g" -N 1 -G 1 -c 10 -n 1 -t 4:00:00 -A m3443 \
+  -q interactive /bin/bash -c "./scripts/start-tritonserver.sh -o triton_ready.txt -m FRNNEval -i localhost/docexoty/frnn-eval:latest"
+```
+
 
 ### Install packages.
 ```
-poetry env use /global/common/software/nersc/pe/conda-envs/24.1.0/python-3.11/nersc-python/bin/python
+uv venv --python /global/common/software/nersc/pe/conda-envs/24.1.0/python-3.11/nersc-python/bin/python
 
-poetry install --no-root
+# torch-scatter, frnn and prefix-sum are built from source and need a C++20 compiler
+# (the system gcc 7 is too old) and nvcc.
+CC=gcc-13 CXX=g++-13 CUDAHOSTCXX=g++-13 TORCH_CUDA_ARCH_LIST=8.0 uv sync
+```

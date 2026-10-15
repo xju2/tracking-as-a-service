@@ -1,75 +1,69 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from operator import itemgetter
 import sys
 
 from taas.graph_construction.double_metric_learning import DoubleMetricLearningGraphConstructor
 
 build_edges = DoubleMetricLearningGraphConstructor.build_edges
-import networkx as nx
 import numpy as np
 import torch
-from torch_geometric.data import Data
-from torch_geometric.transforms import RemoveIsolatedNodes
-from torch_geometric.utils import to_networkx
 import torch.cuda.nvtx as nvtx
+from taas.torch_models.double_metric_learning import DoubleMetricLearning
+from taas.torch_models.interaction_gnn import (
+    ChainedInteractionGNN2,
+    GNNFilterJitable,
+    RecurrentInteractionGNN2,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from taas.graph_segmentation.dwalk import dwalk, get_simple_path as get_dwalk_simple_path
-
-from functools import partial
-from taas.edge_classification.filter import (
-    FilterProfile,
-    run_gnn_filter as _run_gnn_filter,
-    run_gnn_filter_optimized as _run_gnn_filter_optimized,
-    run_torch_model as _run_torch_model,
-)
-
-run_gnn_filter = partial(_run_gnn_filter, profile=FilterProfile.DOUBLE_METRIC_LEGACY)
-run_gnn_filter_optimized = partial(
-    _run_gnn_filter_optimized, profile=FilterProfile.DOUBLE_METRIC_LEGACY
-)
-run_torch_model = partial(_run_torch_model, profile=FilterProfile.DOUBLE_METRIC_LEGACY)
 from taas.graph_segmentation import fastwalkthrough as walkutils
-import time
-import yaml
-import onnxruntime as ort
+from taas.graph_segmentation.acts_junction_removal import acts_junction_removal
+from taas.graph_segmentation.dwalk import dwalk, get_simple_path as get_dwalk_simple_path
+from taas.graph_segmentation.edge_layer_connector import edge_layer_connector
+from taas.graph_segmentation.junction_removal import junction_removal
+from torch_geometric.data import Data
+from torch_geometric.transforms import RemoveIsolatedNodes
+from functools import partial
+from taas.edge_classification.filter import FilterProfile, run_gnn_filter as _run_gnn_filter, run_torch_model as _run_torch_model
 
-from taas.torch_models.double_metric_learning import DoubleMetricLearning
-from taas.torch_models.interaction_gnn import (
-    RecurrentInteractionGNN2,
-    ChainedInteractionGNN2,
-    GNNFilterJitable,
-)
-
-# from triton_radius_nn import build_edges_triton as build_edges
+run_gnn_filter = partial(_run_gnn_filter, profile=FilterProfile.DOUBLE_METRIC_CURRENT)
+run_torch_model = partial(_run_torch_model, profile=FilterProfile.DOUBLE_METRIC_CURRENT)
 
 torch.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 
 
 def to_trk_tensor(trk, device):
+    if isinstance(trk, torch.Tensor):
+        return trk.to(device=device, dtype=torch.long)
+
+    # Convert numba.typed.List or Python list -> numpy
     if not isinstance(trk, np.ndarray):
         trk = np.array(trk, dtype=np.int64)
     else:
         trk = trk.astype(np.int64, copy=False)
 
+    # Finally -> torch tensor on correct device
     return torch.as_tensor(trk, dtype=torch.long, device=device)
 
 
-# def timed(fn):
-#     start = torch.cuda.Event(enable_timing=True)
-#     end = torch.cuda.Event(enable_timing=True)
-#     start.record()
-#     result = fn()
-#     end.record()
-#     torch.cuda.synchronize()
-#     return result, start.elapsed_time(end) / 1000
+def synchronize_if_cuda(device) -> None:
+    if str(device).startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def iter_track_tensors(tracks):
+    for track in tracks:
+        if hasattr(track, "grouped_hit_ids") and hasattr(track, "counts"):
+            yield from track
+        else:
+            yield track
 
 
 
@@ -80,18 +74,32 @@ class MetricLearningInferenceConfig:
     auto_cast: bool
     compiling: bool
     debug: bool
+    graph_segmentation_method: str = "fastwalk"
     use_dwalk: bool = False
     dwalk_use_gpu: bool = True
     dwalk_cc_backend: str = "custom_cuda"
     dwalk_path_metrics: str = "score_weighted_length"
+    jr_use_gpu: bool = True
+    jr_cc_backend: str = "custom_cuda"
+    jr_score_cut: float = 0.9
+    jr_junction_cut: float = 0.2
+    jr_min_chain_length: int = 5
+    jr_skip_remove_cycles: bool = True
+    acts_jr_use_gpu: bool = True
+    acts_jr_cc_backend: str = "custom_cuda"
+    acts_jr_min_candidate_size: int = 3
+    elc_weights_cut: float = 0.01
+    elc_min_hits: int = 3
+    elc_block_size: int = 512
+    elc_max_hits_per_track: int = 30
     save_debug_data: bool = False
     r_max: float = 0.14
     k_max: int = 1000
-    filter_cut: float = 0.05
+    filter_cut: float = 0.01
     filter_batches: int = 10
     collect_timing: bool = False
     filter_timing_skip_events: int = 0
-    cc_cut: float = 0.01
+    cc_cut: float | None = None
     walk_min: float = 0.1
     walk_max: float = 0.6
     embedding_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2"
@@ -119,13 +127,24 @@ class MetricLearningInferenceConfig:
         self.model_path = (
             Path(self.model_path) if isinstance(self.model_path, str) else self.model_path
         )
+        self.graph_segmentation_method = self.graph_segmentation_method.lower()
+        if self.graph_segmentation_method == "fastwalk" and self.use_dwalk:
+            self.graph_segmentation_method = "dwalk"
+        if self.cc_cut is None:
+            self.cc_cut = (
+                0.5
+                if self.graph_segmentation_method
+                in {"acts_junction_removal", "acts_jr"}
+                else 0.01
+            )
 
 
 class MetricLearningInference:
     def __init__(self, config: MetricLearningInferenceConfig):
         self.config = config
         self.last_timing: dict[str, float] = {}
-        self._filter_timed_event_count = 0
+        self._timed_event_count = 0
+        self._skip_timing_this_event = False
         print(self.config)
         model_path = (
             Path(self.config.model_path)
@@ -179,22 +198,27 @@ class MetricLearningInference:
         self.gnn_model = new_gnn
         self.gnn_model.to(self.config.device).eval()
 
+        device = self.config.device
+        self.embedding_scale = torch.tensor(config.embedding_node_scale, device=device)
+        self.filter_scale = torch.tensor(config.filter_node_scale, device=device)
+        self.gnn_scale = torch.tensor(config.gnn_node_scale, device=device)
+
         if self.config.compiling:
             print("compiling models works now...")
             torch.set_float32_matmul_precision("high")
             # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
             self.embedding_model = torch.compile(
-                self.embedding_model, dynamic=True, mode="max-autotune"
+                self.embedding_model, mode="reduce-overhead"
             )
             # # Compile GNNFilter
             self.filter_model.gnn = torch.compile(
-                self.filter_model.gnn, dynamic=True, mode="max-autotune"
+                self.filter_model.gnn, mode="reduce-overhead"
             )
             self.filter_model.net = torch.compile(
-                self.filter_model.net, dynamic=True, mode="max-autotune"
+                self.filter_model.net, mode="reduce-overhead"
             )
             # # Compile interaction gnn
-            self.gnn_model = torch.compile(self.gnn_model, dynamic=True, mode="max-autotune")
+            self.gnn_model = torch.compile(self.gnn_model, mode="reduce-overhead")
             # self.embedding_model.eval()
             # self.filter_model.eval()
             # self.gnn_model.eval()
@@ -246,12 +270,10 @@ class MetricLearningInference:
             "cluster_eta_2",
         ]
 
-    def _record_filter_timing(self, duration_seconds: float) -> None:
-        self._filter_timed_event_count += 1
-        if self._filter_timed_event_count <= self.config.filter_timing_skip_events:
-            self.last_timing.pop("filtering_seconds", None)
+    def _record_timing(self, timing_key: str, duration_seconds: float) -> None:
+        if self._skip_timing_this_event:
             return
-        self.last_timing["filtering_seconds"] = duration_seconds
+        self.last_timing[timing_key] = duration_seconds
 
     def forward(
         self,
@@ -260,11 +282,15 @@ class MetricLearningInference:
         nvtx_enabled: bool = False,
     ):
         self.last_timing.clear()
+        if self.config.collect_timing:
+            self._timed_event_count += 1
+            self._skip_timing_this_event = (
+                self._timed_event_count <= self.config.filter_timing_skip_events
+            )
+        else:
+            self._skip_timing_this_event = False
         device = self.config.device
         use_nvtx = nvtx_enabled and torch.cuda.is_available() and str(device).startswith("cuda")
-        debug = self.config.debug
-        save_debug_data = self.config.save_debug_data
-        out_debug_data_name = "debug_data.pt"
 
         track_candidates = np.array([-1], dtype=np.int64)
         if node_features is None or node_features.shape[0] < 3:
@@ -279,39 +305,21 @@ class MetricLearningInference:
         if use_nvtx:
             nvtx.range_push("ML Inference one event")
 
-        # Metric Learning
         if use_nvtx:
             nvtx.range_push("Metric Learning Inference")
 
         embedding_inputs = node_features[
             :, [self.input_node_features.index(x) for x in self.config.embedding_node_features]
         ]
-        embedding_inputs /= torch.tensor(self.config.embedding_node_scale, device=device).float()
+        embedding_inputs /= self.embedding_scale
 
-        # torch.cuda.synchronize()
-        # t0 = time.time()
         src_embedding, tgt_embedding = run_torch_model(
             self.embedding_model, self.config.auto_cast, embedding_inputs
         )
+
         if use_nvtx:
             torch.cuda.synchronize()
             nvtx.range_pop()
-        # torch.cuda.synchronize()
-        # print(f"run_torch_model (embedding) time: {time.time() - t0:.4f} s")
-
-        if debug:
-            print(f"after embedding, shape = {src_embedding.shape}, {tgt_embedding.shape}")
-            print("embedding data", src_embedding[0], tgt_embedding[0])
-            print("embedding data type", src_embedding.dtype, tgt_embedding.dtype)
-
-        out_data = Data()
-        if save_debug_data:
-            out_data = Data(
-                embedding_inputs=embedding_inputs,
-                src_embedding=src_embedding,
-                tgt_embedding=tgt_embedding,
-                node_features=node_features,
-            )
 
         # delete the embedding inputs if not needed.
         if self.config.filter_node_features == self.config.embedding_node_features:
@@ -321,30 +329,20 @@ class MetricLearningInference:
             filtering_inputs = node_features[
                 :, [self.input_node_features.index(x) for x in self.config.filter_node_features]
             ]
-            filtering_inputs /= torch.tensor(self.config.filter_node_scale, device=device).float()
+            filtering_inputs /= self.filter_scale
 
-        if save_debug_data:
-            out_data.filtering_nodes = filtering_inputs
-
-        # Build edges
         if use_nvtx:
             nvtx.range_push("Build Edges")
-        # torch.cuda.synchronize()
-        # t0 = time.time()
-        # self.config.k_max  = 1024
+
         edge_index = build_edges(
             src_embedding, tgt_embedding, r_max=self.config.r_max, k_max=self.config.k_max
         )
+
         if use_nvtx:
             torch.cuda.synchronize()
             nvtx.range_pop()
 
-        if save_debug_data:
-            out_data.embedding_edge_list = edge_index
-
         if edge_index.shape[1] < 2:
-            if save_debug_data:
-                torch.save(out_data, out_debug_data_name)
             if use_nvtx:
                 nvtx.range_pop()
             return track_candidates
@@ -360,39 +358,25 @@ class MetricLearningInference:
         edge_index[:, edge_flip_mask] = edge_index[:, edge_flip_mask].flip(0)
         edge_index = torch.unique(edge_index, dim=-1)
 
-        if debug:
-            print(f"after removing duplications: {edge_index.shape[1]:,}")
-
-        if save_debug_data:
-            out_data.filter_edge_list_before = edge_index
-
-        # GNNFiltering
         if use_nvtx:
             nvtx.range_push("GNN Filtering")
+
         filter_start_time = time.perf_counter() if self.config.collect_timing else None
-        edge_scores, edge_index, _ = run_gnn_filter_optimized(
-            self.filter_model,
-            self.config.auto_cast,
-            self.config.filter_batches,
-            filtering_inputs,
-            edge_index,
+        edge_scores, edge_index, _ = run_gnn_filter(
+            model=self.filter_model,
+            auto_cast=self.config.auto_cast,
+            batches=self.config.filter_batches,
+            x=filtering_inputs,
+            edge_index=edge_index,
         )
         if self.config.collect_timing:
             if str(device).startswith("cuda") and torch.cuda.is_available():
                 torch.cuda.synchronize()
-            self._record_filter_timing(time.perf_counter() - filter_start_time)
+            self._record_timing("filtering_seconds", time.perf_counter() - filter_start_time)
+
         if use_nvtx:
             torch.cuda.synchronize()
             nvtx.range_pop()
-
-        if debug:
-            print("edge_score", edge_scores[:10])
-            print("edge_index", edge_index[:, :10])
-
-        if save_debug_data:
-            out_data.filter_node_features = filtering_inputs
-            out_data.filter_scores = edge_scores
-            out_data.filter_edge_list_after = edge_index
 
         # apply fitlering score cuts.
         edge_index = edge_index[:, edge_scores >= self.config.filter_cut]
@@ -402,13 +386,11 @@ class MetricLearningInference:
                 nvtx.range_pop()
             return track_candidates
 
-        if debug:
-            print(f"Number of edges after filtering: {edge_index.shape[1]:,}")
         # prepare GNN inputs
         gnn_input = node_features[
             :, [self.input_node_features.index(x) for x in self.config.gnn_node_features]
         ]
-        gnn_input /= torch.tensor(self.config.gnn_node_scale, device=device).float()
+        gnn_input /= self.gnn_scale
 
         # calculate edge features: dr, dphi, dz, deta, phislope, rphislope
         def reset_angle(angles):
@@ -444,22 +426,13 @@ class MetricLearningInference:
             )
             r_avg = (r[dst] + r[src]) / 2.0
             rphislope = torch.nan_to_num(torch.multiply(r_avg, phislope), nan=0.0)
-            return {
-                "dr": dr,
-                "dphi": dphi,
-                "dz": dz,
-                "deta": deta,
-                "phislope": phislope,
-                "rphislope": rphislope,
-            }
+            return torch.stack([dr, dphi, dz, deta, phislope, rphislope], dim=1)
 
-        edge_features_dict = calculate_edge_features()
-        edge_features = torch.stack(list(edge_features_dict.values()), dim=1)
+        edge_features = calculate_edge_features().to(device).float()
 
-        # torch.cuda.synchronize()
-        # t0 = time.time()
         if use_nvtx:
             nvtx.range_push("GNN Inference")
+
         edge_scores = (
             run_torch_model(
                 self.gnn_model, self.config.auto_cast, gnn_input, edge_index, edge_features
@@ -467,27 +440,22 @@ class MetricLearningInference:
             .sigmoid()
             .to(torch.float32)
         )
+
         if use_nvtx:
             torch.cuda.synchronize()
             nvtx.range_pop()
-        # print(f"run_torch_model (GNN) time: {time.time() - t0:.4f} s")
 
-        # CC and Walkthrough
-        # if nvtx_enabled:
-        #     nvtx.range_push("CC and Walkthrough")
-        if debug:
-            print("After GNN...")
-
-        if save_debug_data:
-            out_data.gnn_scores = edge_scores
-            out_data.gnn_edge_lists = edge_index
-            out_data.gnn_edge_features = edge_features
-            out_data.gnn_node_features = gnn_input
-
-        good_edge_mask = edge_scores > self.config.cc_cut
-        edge_index = edge_index[:, good_edge_mask]
-        edge_scores = edge_scores[good_edge_mask]
-        del good_edge_mask
+        segmentation_method = self.config.graph_segmentation_method
+        if segmentation_method not in {
+            "junction_removal",
+            "jr",
+            "edge_layer_connector",
+            "elc",
+        }:
+            good_edge_mask = edge_scores > self.config.cc_cut
+            edge_index = edge_index[:, good_edge_mask]
+            edge_scores = edge_scores[good_edge_mask]
+            del good_edge_mask
 
         score_name = "edge_scores"
         graph = Data(
@@ -500,13 +468,19 @@ class MetricLearningInference:
         graph = RemoveIsolatedNodes()(graph)
 
         all_trkx = {}
-        if self.config.use_dwalk:
+        if segmentation_method == "dwalk":
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
             all_trkx["cc"], dwalk_graph = get_dwalk_simple_path(
                 graph,
                 score_name,
                 self.config.cc_cut,
                 use_gpu=self.config.dwalk_use_gpu,
                 cc_backend=self.config.dwalk_cc_backend,
+                return_tensors=True,
             )
             all_trkx["walk"] = dwalk(
                 dwalk_graph,
@@ -516,24 +490,102 @@ class MetricLearningInference:
                 self.config.dwalk_path_metrics,
                 use_gpu=self.config.dwalk_use_gpu,
                 cc_backend=self.config.dwalk_cc_backend,
+                return_tensors=True,
             )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
+        elif segmentation_method in {"junction_removal", "jr"}:
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
+            all_trkx["cc"] = []
+            all_trkx["walk"] = junction_removal(
+                graph,
+                score_name,
+                score_cut=self.config.jr_score_cut,
+                junction_cut=self.config.jr_junction_cut,
+                min_chain_length=self.config.jr_min_chain_length,
+                skip_remove_cycles=self.config.jr_skip_remove_cycles,
+                use_gpu=self.config.jr_use_gpu,
+                cc_backend=self.config.jr_cc_backend,
+            )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
+        elif segmentation_method in {"acts_junction_removal", "acts_jr"}:
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
+            all_trkx["cc"] = []
+            all_trkx["walk"] = acts_junction_removal(
+                graph,
+                score_name,
+                min_candidate_size=self.config.acts_jr_min_candidate_size,
+                use_gpu=self.config.acts_jr_use_gpu,
+                cc_backend=self.config.acts_jr_cc_backend,
+            )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
+        elif segmentation_method in {"edge_layer_connector", "elc"}:
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
+            all_trkx["cc"] = []
+            all_trkx["walk"] = edge_layer_connector(
+                graph,
+                score_name,
+                weights_cut=self.config.elc_weights_cut,
+                min_hits=self.config.elc_min_hits,
+                block_size=self.config.elc_block_size,
+                max_hits_per_track=self.config.elc_max_hits_per_track,
+            )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
         else:
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
             all_trkx["cc"], graph = walkutils.get_simple_path(graph)
             all_trkx["walk"] = walkutils.walk_through(
                 graph, score_name, self.config.walk_min, self.config.walk_max, False
             )
-        if debug:
-            print("the graph information")
-            # with open("graph_info.txt", "w") as f:
-            #     f.write(f"{G.nodes(data=True)}\n")
-            #     f.write(f"{G.edges(data=True)}\n")
-        if debug:
-            print(f"Number of tracks found by CC: {len(all_trkx['cc'])}")
-            print(f"Number of tracks found by Walkthrough: {len(all_trkx['walk'])}")
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
+
         if use_nvtx:
+            torch.cuda.synchronize()
             nvtx.range_pop()
 
-        tracks = all_trkx["cc"] + list(all_trkx["walk"])
+        tracks = list(iter_track_tensors(all_trkx["cc"])) + list(
+            iter_track_tensors(all_trkx["walk"])
+        )
         total_length = sum(len(trk) + 1 for trk in tracks)
         track_candidates = np.empty(total_length, dtype=int)
 
@@ -548,12 +600,6 @@ class MetricLearningInference:
             i += n
             track_candidates[i] = -1
             i += 1
-        # write candidates to a file.
-        if debug:
-            print("track_candidates", track_candidates[:20])
-        if save_debug_data:
-            out_data.track_candidates = torch.from_numpy(track_candidates).to(torch.int64)
-            torch.save(out_data, out_debug_data_name)
 
         return track_candidates
 
@@ -575,9 +621,24 @@ def create_metric_learning_end2end_rel24(
     compiling: bool,
     use_dwalk: bool,
     save_data_for_debug: bool,
+    graph_segmentation_method: str = "fastwalk",
     dwalk_use_gpu: bool = True,
     dwalk_cc_backend: str = "custom_cuda",
     dwalk_path_metrics: str = "score_weighted_length",
+    jr_use_gpu: bool = True,
+    jr_cc_backend: str = "custom_cuda",
+    jr_score_cut: float = 0.9,
+    jr_junction_cut: float = 0.2,
+    jr_min_chain_length: int = 5,
+    jr_skip_remove_cycles: bool = True,
+    acts_jr_use_gpu: bool = True,
+    acts_jr_cc_backend: str = "custom_cuda",
+    acts_jr_min_candidate_size: int = 3,
+    elc_weights_cut: float = 0.01,
+    elc_min_hits: int = 3,
+    elc_block_size: int = 512,
+    elc_max_hits_per_track: int = 30,
+    cc_cut: float | None = None,
     filter_timing_skip_events: int = 0,
 ):
     config = MetricLearningInferenceConfig(
@@ -585,18 +646,32 @@ def create_metric_learning_end2end_rel24(
         device=device,
         auto_cast=auto_cast,
         compiling=compiling,
-        debug=debug,
+        graph_segmentation_method=graph_segmentation_method,
         use_dwalk=use_dwalk,
         dwalk_use_gpu=dwalk_use_gpu,
         dwalk_cc_backend=dwalk_cc_backend,
         dwalk_path_metrics=dwalk_path_metrics,
+        jr_use_gpu=jr_use_gpu,
+        jr_cc_backend=jr_cc_backend,
+        jr_score_cut=jr_score_cut,
+        jr_junction_cut=jr_junction_cut,
+        jr_min_chain_length=jr_min_chain_length,
+        jr_skip_remove_cycles=jr_skip_remove_cycles,
+        acts_jr_use_gpu=acts_jr_use_gpu,
+        acts_jr_cc_backend=acts_jr_cc_backend,
+        acts_jr_min_candidate_size=acts_jr_min_candidate_size,
+        elc_weights_cut=elc_weights_cut,
+        elc_min_hits=elc_min_hits,
+        elc_block_size=elc_block_size,
+        elc_max_hits_per_track=elc_max_hits_per_track,
+        debug=debug,
         save_debug_data=save_data_for_debug,
         r_max=0.14,
         k_max=1000,
-        filter_cut=0.05,
-        filter_batches=10,
+        filter_cut=0.01,
+        filter_batches=1,
         filter_timing_skip_events=max(filter_timing_skip_events, 0),
-        cc_cut=0.01,
+        cc_cut=cc_cut,
         walk_min=0.1,
         walk_max=0.6,
         embedding_node_features="r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2",
@@ -617,13 +692,28 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Inference for Metric Learning")
     parser.add_argument("-i", "--input", type=str, default="node_features.pt", help="Input file")
-    parser.add_argument("-m", "--model", type=str, default="./", help="Model path")
+    parser.add_argument("-m", "--model", type=str, default="../3", help="Model path")
     parser.add_argument("-p", "--precision", type=str, default="highest", help="Precision")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")
     parser.add_argument("-d", "--device", default="cuda", help="Device")
     parser.add_argument("-t", "--timing", action="store_true", help="Time the inference")
     parser.add_argument("-c", "--compiling", action="store_true", help="Use compiling")
+    parser.add_argument(
+        "--graph-segmentation-method",
+        default="fastwalk",
+        choices=(
+            "fastwalk",
+            "dwalk",
+            "junction_removal",
+            "jr",
+            "acts_junction_removal",
+            "acts_jr",
+            "edge_layer_connector",
+            "elc",
+        ),
+        help="Graph segmentation method",
+    )
     parser.add_argument("--use-dwalk", action="store_true", help="Use D-WALK")
     parser.add_argument(
         "--dwalk-use-gpu",
@@ -644,6 +734,45 @@ if __name__ == "__main__":
         default="score_weighted_length",
         choices=("score_weighted_length", "length"),
         help="Path metric for D-WALK",
+    )
+    parser.add_argument(
+        "--jr-use-gpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run Junction Removal CC on CUDA when available",
+    )
+    parser.add_argument(
+        "--jr-cc-backend",
+        default="custom_cuda",
+        choices=("auto", "scipy", "custom_cuda"),
+        help="Connected-components backend for Junction Removal",
+    )
+    parser.add_argument("--jr-score-cut", type=float, default=0.9, help="High-score simple-chain cut for Junction Removal")
+    parser.add_argument("--jr-junction-cut", type=float, default=0.2, help="Junction edge score cut")
+    parser.add_argument("--jr-min-chain-length", type=int, default=5, help="Minimum simple-chain length")
+    parser.add_argument("--jr-remove-cycles", action="store_true", help="Orient/remove cycles before Junction Removal")
+    parser.add_argument(
+        "--acts-jr-use-gpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run ACTS-style Junction Removal CC on CUDA when available",
+    )
+    parser.add_argument(
+        "--acts-jr-cc-backend",
+        default="custom_cuda",
+        choices=("auto", "scipy", "custom_cuda"),
+        help="Connected-components backend for ACTS-style Junction Removal",
+    )
+    parser.add_argument("--acts-jr-min-candidate-size", type=int, default=3, help="Minimum ACTS-style JR candidate size")
+    parser.add_argument("--elc-weights-cut", type=float, default=0.01, help="EdgeLayerConnector internal edge weight cut")
+    parser.add_argument("--elc-min-hits", type=int, default=3, help="EdgeLayerConnector minimum hits per track")
+    parser.add_argument("--elc-block-size", type=int, default=512, help="EdgeLayerConnector CUDA block size")
+    parser.add_argument("--elc-max-hits-per-track", type=int, default=30, help="EdgeLayerConnector maximum hits per track")
+    parser.add_argument(
+        "--cc-cut",
+        type=float,
+        default=None,
+        help="Pre-segmentation GNN edge score cut; defaults to 0.5 for ACTS JR and 0.01 otherwise",
     )
     parser.add_argument(
         "--filter-timing-skip-events",
@@ -667,10 +796,25 @@ if __name__ == "__main__":
         auto_cast=args.auto_cast,
         compiling=args.compiling,
         use_dwalk=args.use_dwalk,
+        save_data_for_debug=args.save_data_for_debug,
+        graph_segmentation_method=args.graph_segmentation_method,
         dwalk_use_gpu=args.dwalk_use_gpu,
         dwalk_cc_backend=args.dwalk_cc_backend,
         dwalk_path_metrics=args.dwalk_path_metrics,
-        save_data_for_debug=args.save_data_for_debug,
+        jr_use_gpu=args.jr_use_gpu,
+        jr_cc_backend=args.jr_cc_backend,
+        jr_score_cut=args.jr_score_cut,
+        jr_junction_cut=args.jr_junction_cut,
+        jr_min_chain_length=args.jr_min_chain_length,
+        jr_skip_remove_cycles=not args.jr_remove_cycles,
+        acts_jr_use_gpu=args.acts_jr_use_gpu,
+        acts_jr_cc_backend=args.acts_jr_cc_backend,
+        acts_jr_min_candidate_size=args.acts_jr_min_candidate_size,
+        elc_weights_cut=args.elc_weights_cut,
+        elc_min_hits=args.elc_min_hits,
+        elc_block_size=args.elc_block_size,
+        elc_max_hits_per_track=args.elc_max_hits_per_track,
+        cc_cut=args.cc_cut,
         filter_timing_skip_events=args.filter_timing_skip_events,
     )
     print("start a warm-up run.")

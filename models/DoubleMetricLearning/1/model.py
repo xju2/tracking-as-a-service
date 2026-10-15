@@ -40,10 +40,19 @@ class TritonPythonModel:
         self.model_config = model_config = json.loads(args["model_config"])
         self.model_instance_device_id = json.loads(args["model_instance_device_id"])
 
+        # Store device in consistent format
+        if torch.cuda.is_available():
+            self.device = f"cuda:{self.model_instance_device_id}"
+            self.device_id = self.model_instance_device_id
+        else:
+            self.device = "cpu"
+            self.device_id = "cpu"
+
+        if torch.cuda.is_available():
+            torch.cuda.set_device(self.device_id)
+
         parameters = model_config["parameters"]
         self.debug = False
-        if "debug" in parameters:
-            self.debug = parameters["debug"]["string_value"].lower() == "true"
 
         def get_parameter(name):
             if name not in parameters:
@@ -55,18 +64,71 @@ class TritonPythonModel:
                 return parameters[name]["string_value"]
             return default
 
-        self.save_event = (
-            parameters.get("save_event", {"string_value": "False"})["string_value"].lower()
-            == "true"
-        )
         model_path = Path(args["model_repository"]) / args["model_version"]
-        device = "cuda" if torch.cuda.is_available() else "cpu"
         auto_cast = get_parameter("auto_cast").lower() == "true"
         compiling = get_parameter("compiling").lower() == "true"
+        graph_segmentation_method = parameters.get(
+            "graph_segmentation_method", {"string_value": "fastwalk"}
+        )["string_value"]
         use_dwalk = get_optional_parameter("use_dwalk", "False").lower() == "true"
         dwalk_use_gpu = get_optional_parameter("dwalk_use_gpu", "True").lower() == "true"
         dwalk_cc_backend = get_optional_parameter("dwalk_cc_backend", "custom_cuda")
         dwalk_path_metrics = get_optional_parameter("dwalk_path_metrics", "score_weighted_length")
+        jr_use_gpu = (
+            parameters.get("jr_use_gpu", {"string_value": "True"})["string_value"].lower()
+            == "true"
+        )
+        jr_cc_backend = parameters.get(
+            "jr_cc_backend", {"string_value": "custom_cuda"}
+        )["string_value"]
+        jr_score_cut = float(
+            parameters.get("jr_score_cut", {"string_value": "0.9"})["string_value"]
+        )
+        jr_junction_cut = float(
+            parameters.get("jr_junction_cut", {"string_value": "0.2"})["string_value"]
+        )
+        jr_min_chain_length = int(
+            parameters.get("jr_min_chain_length", {"string_value": "5"})["string_value"]
+        )
+        jr_skip_remove_cycles = (
+            parameters.get("jr_skip_remove_cycles", {"string_value": "True"})["string_value"].lower()
+            == "true"
+        )
+        acts_jr_use_gpu = (
+            parameters.get("acts_jr_use_gpu", {"string_value": "True"})[
+                "string_value"
+            ].lower()
+            == "true"
+        )
+        acts_jr_cc_backend = parameters.get(
+            "acts_jr_cc_backend", {"string_value": "custom_cuda"}
+        )["string_value"]
+        acts_jr_min_candidate_size = int(
+            parameters.get("acts_jr_min_candidate_size", {"string_value": "3"})[
+                "string_value"
+            ]
+        )
+        elc_weights_cut = float(
+            parameters.get("elc_weights_cut", {"string_value": "0.01"})[
+                "string_value"
+            ]
+        )
+        elc_min_hits = int(
+            parameters.get("elc_min_hits", {"string_value": "3"})["string_value"]
+        )
+        elc_block_size = int(
+            parameters.get("elc_block_size", {"string_value": "512"})["string_value"]
+        )
+        elc_max_hits_per_track = int(
+            parameters.get("elc_max_hits_per_track", {"string_value": "30"})[
+                "string_value"
+            ]
+        )
+        cc_cut = (
+            float(parameters["cc_cut"]["string_value"])
+            if "cc_cut" in parameters
+            else None
+        )
         collect_timing = (
             parameters.get("collect_timing", {"string_value": "True"})["string_value"].lower()
             == "true"
@@ -82,17 +144,32 @@ class TritonPythonModel:
         )
         config = MetricLearningInferenceConfig(
             model_path=model_path,
-            device=device,
+            device=self.device,
             auto_cast=auto_cast,
             compiling=compiling,
-            debug=self.debug,
+            graph_segmentation_method=graph_segmentation_method,
             use_dwalk=use_dwalk,
             dwalk_use_gpu=dwalk_use_gpu,
             dwalk_cc_backend=dwalk_cc_backend,
             dwalk_path_metrics=dwalk_path_metrics,
-            save_debug_data=self.save_event,
+            jr_use_gpu=jr_use_gpu,
+            jr_cc_backend=jr_cc_backend,
+            jr_score_cut=jr_score_cut,
+            jr_junction_cut=jr_junction_cut,
+            jr_min_chain_length=jr_min_chain_length,
+            jr_skip_remove_cycles=jr_skip_remove_cycles,
+            acts_jr_use_gpu=acts_jr_use_gpu,
+            acts_jr_cc_backend=acts_jr_cc_backend,
+            acts_jr_min_candidate_size=acts_jr_min_candidate_size,
+            elc_weights_cut=elc_weights_cut,
+            elc_min_hits=elc_min_hits,
+            elc_block_size=elc_block_size,
+            elc_max_hits_per_track=elc_max_hits_per_track,
+            cc_cut=cc_cut,
             collect_timing=collect_timing,
             filter_timing_skip_events=filter_timing_skip_events,
+            debug=self.debug,
+            save_debug_data=False,
         )
 
         self.inference = MetricLearningInference(config)
@@ -101,6 +178,7 @@ class TritonPythonModel:
         self._timing_lock = Lock()
         self._timed_request_count = 0
         self._filter_time_total = 0.0
+        self._graph_segmentation_time_total = 0.0
 
         # Get OUTPUT0 configuration
         output0_config = pb_utils.get_output_config_by_name(model_config, "LABELS")
@@ -137,7 +215,7 @@ class TritonPythonModel:
         # and create a pb_utils.InferenceResponse for each of them.
         for request in requests:
             features = pb_utils.get_input_tensor_by_name(request, "FEATURES")
-            features = from_dlpack(features.to_dlpack()).to(self.model_instance_device_id)
+            features = from_dlpack(features.to_dlpack()).to(self.device)
             if self.debug:
                 print(f"{features.shape[0]:,} space points with {features.shape[1]:,} features.")
 
@@ -147,15 +225,33 @@ class TritonPythonModel:
                 else np.array([-1], dtype=np.int64)
             )
 
-            if self.collect_timing and "filtering_seconds" in self.inference.last_timing:
+            if self.collect_timing and self.inference.last_timing:
                 with self._timing_lock:
                     self._timed_request_count += 1
-                    self._filter_time_total += self.inference.last_timing["filtering_seconds"]
+                    self._filter_time_total += self.inference.last_timing.get(
+                        "filtering_seconds", 0.0
+                    )
+                    self._graph_segmentation_time_total += self.inference.last_timing.get(
+                        "graph_segmentation_seconds", 0.0
+                    )
                     if self._timed_request_count % self.timing_report_interval == 0:
-                        average_ms = 1000.0 * self._filter_time_total / self._timed_request_count
+                        average_filter_ms = (
+                            1000.0 * self._filter_time_total / self._timed_request_count
+                        )
+                        average_graph_segmentation_ms = (
+                            1000.0
+                            * self._graph_segmentation_time_total
+                            / self._timed_request_count
+                        )
                         print(
                             "[timing] DoubleMetricLearning average filtering time: "
-                            f"{average_ms:.3f} ms over {self._timed_request_count} requests"
+                            f"{average_filter_ms:.3f} ms over {self._timed_request_count} requests",
+                            flush=True,
+                        )
+                        print(
+                            "[timing] DoubleMetricLearning average graph segmentation time: "
+                            f"{average_graph_segmentation_ms:.3f} ms over {self._timed_request_count} requests",
+                            flush=True,
                         )
 
             if self.debug:

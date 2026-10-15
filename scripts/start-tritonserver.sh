@@ -2,14 +2,18 @@
 
 OUTPUTFILE="node_id.txt"
 MODEL_NAME=""
+CLI_TRITON_IMAGE=""
 
-while getopts "o:m:" opt; do
+while getopts "o:m:i:" opt; do
   case $opt in
     o)
       OUTPUTFILE=$OPTARG
       ;;
     m)
       MODEL_NAME=$OPTARG
+      ;;
+    i)
+      CLI_TRITON_IMAGE=$OPTARG
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -27,7 +31,10 @@ TAAS_UNIFIED_TRITON_IMAGE="${TAAS_UNIFIED_TRITON_IMAGE:-docker.io/jaychanhep/tri
 TAAS_DML_TRITON_IMAGE="${TAAS_DML_TRITON_IMAGE:-$TAAS_UNIFIED_TRITON_IMAGE}"
 TAAS_MODULEMAP_TRITON_IMAGE="${TAAS_MODULEMAP_TRITON_IMAGE:-$TAAS_UNIFIED_TRITON_IMAGE}"
 
-if [ -n "${TAAS_TRITON_IMAGE:-}" ]; then
+if [ -n "$CLI_TRITON_IMAGE" ]; then
+    TRITON_IMAGE="$CLI_TRITON_IMAGE"
+    TRITON_IMAGE_REASON="-i override"
+elif [ -n "${TAAS_TRITON_IMAGE:-}" ]; then
     TRITON_IMAGE="$TAAS_TRITON_IMAGE"
     TRITON_IMAGE_REASON="TAAS_TRITON_IMAGE override"
 else

@@ -1,0 +1,84 @@
+name: "FRNNEval"
+backend: "python"
+
+input [
+  {
+    name: "FEATURES"
+    data_type: TYPE_FP32
+    dims: [ -1, 44 ]
+  }
+]
+
+# Same output as MetricLearning so that clients (e.g. Athena) run unchanged.
+# Always the dummy labels [0, 1, 2, 3, 4, 5]; the comparison results go to
+# the server log and output_dir.
+output [
+  {
+    name: "LABELS"
+    data_type: TYPE_INT64
+    dims: [ -1 ]
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+    gpus: [ 0 ]
+   }
+]
+
+# Directory with embedding.ckpt and the MetricLearning modules,
+# relative to this model's directory.
+parameters: {
+  key: "embedding_model_dir",
+  value: {string_value: "../MetricLearning/1"}
+}
+
+# Where disagreeing events are saved, relative to the server's working directory.
+parameters: {
+  key: "output_dir",
+  value: {string_value: "frnn_eval_outputs"}
+}
+
+parameters: {
+  key: "r_max",
+  value: {string_value: "0.12"}
+}
+
+parameters: {
+  key: "k_max",
+  value: {string_value: "1000"}
+}
+
+parameters: {
+  key: "auto_cast",
+  value: {string_value: "False"}
+}
+
+# Append per-request metrics (request ID, # of space points, # of FRNN and libFRNN
+# edges, # of differing edges, FRNN and libFRNN latencies) to
+# output_dir/eval_metrics_pid<pid>.csv.
+parameters: {
+  key: "save_eval_metrics",
+  value: {string_value: "True"}
+}
+
+# Save every event's embedding and both edge lists as .npy files under
+# output_dir/data/<time>_pid<pid>_<n>/ for the libFRNN benchmarks.
+parameters: {
+  key: "save_data",
+  value: {string_value: "False"}
+}
+
+# Record each library's peak GPU memory (frnn_peak_mem_mb, libfrnn_peak_mem_mb in the
+# eval metrics CSV). Runs both libraries once more, untimed, per request.
+parameters: {
+  key: "measure_memory",
+  value: {string_value: "True"}
+}
+
+parameters: {
+  key: "debug",
+  value: {string_value: "False"}
+}
