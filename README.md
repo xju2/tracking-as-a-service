@@ -19,12 +19,14 @@ Or, launch the server with a regular batch job for 48 hours
 sbatch -G 1 request_servers.sh
 ```
 
-2. Run the client:
+2. Run a standalone inference check:
 ```bash
 podman-hpc run -it --rm --ipc=host --net=host --ulimit memlock=-1 --ulimit stack=67108864 \
   -v ${PWD}:/workspace/ -w /workspace \
   -v /global/cfs/cdirs/m3443/data/for_alina:/global/cfs/cdirs/m3443/data/for_alina \
-  docker.io/docexoty/tritonserver:latest python models/MetricLearning/2/client.py -i /global/cfs/cdirs/m3443/data/for_alina/all_input_node_features.pt
+  docker.io/docexoty/tritonserver:latest python models/MetricLearning/1/inference.py \
+  -m models/MetricLearning/1 \
+  -i /global/cfs/cdirs/m3443/data/for_alina/all_input_node_features.pt
 ```
 
 ## Models

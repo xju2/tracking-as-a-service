@@ -16,7 +16,7 @@ On disagreement, the embedding and both edge lists are saved with `torch.save` t
 
 Parameters in `config.pbtxt`:
 - `embedding_model_dir`: directory with `embedding.ckpt` and the MetricLearning modules,
-  relative to this model directory (default `../MetricLearning/4`).
+  relative to this model directory (default `../MetricLearning/1`).
 - `output_dir`: where disagreeing events are saved, relative to the server's working directory.
 - `r_max`, `k_max`: radius and maximum number of neighbors, as in MetricLearning.
 - `save_eval_metrics`: if `True`, append one row per request to

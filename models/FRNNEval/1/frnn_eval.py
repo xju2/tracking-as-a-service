@@ -68,7 +68,7 @@ INPUT_NODE_FEATURES = [
 
 
 def build_edges_frnn(embedding: torch.Tensor, r_max: float, k_max: int) -> torch.Tensor:
-    """Original FRNN, exactly as in MetricLearning/4/inference.py::build_edges."""
+    """Original FRNN, exactly as in MetricLearning/1/inference.py::build_edges."""
     import frnn
 
     _, idxs, _, _ = frnn.frnn_grid_points(
@@ -330,7 +330,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compare FRNN and libFRNN edge lists")
     parser.add_argument("-i", "--input", required=True, help="Node features [N, 44] .pt file")
     parser.add_argument(
-        "-m", "--model", default="../../MetricLearning/4", help="Embedding model directory"
+        "-m", "--model", default="../../MetricLearning/1", help="Embedding model directory"
     )
     parser.add_argument("-o", "--output-dir", default="frnn_eval_outputs")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")

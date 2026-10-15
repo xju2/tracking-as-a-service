@@ -692,7 +692,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Inference for Metric Learning")
     parser.add_argument("-i", "--input", type=str, default="node_features.pt", help="Input file")
-    parser.add_argument("-m", "--model", type=str, default="../3", help="Model path")
+    parser.add_argument("-m", "--model", type=str, default=".", help="Model path")
     parser.add_argument("-p", "--precision", type=str, default="highest", help="Precision")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")

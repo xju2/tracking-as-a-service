@@ -79,6 +79,20 @@ class SharedRuntimeTest(unittest.TestCase):
 
 
 class ConsolidationContractTest(unittest.TestCase):
+    def test_tracking_models_only_deploy_version_one(self):
+        for model_name in (
+            "MetricLearning",
+            "DoubleMetricLearning",
+            "GNN4Pixel",
+            "ModuleMap",
+        ):
+            model_dir = REPO_ROOT / "models" / model_name
+            versions = sorted(
+                path.name for path in model_dir.iterdir()
+                if path.is_dir() and path.name.isdigit()
+            )
+            self.assertEqual(versions, ["1"], model_name)
+
     def test_fastwalk_profiles_preserve_current_incoming_edge_cut(self):
         graph = Data(
             edge_index=torch.tensor([[0, 1], [2, 2]]),
@@ -145,14 +159,14 @@ class TritonConfigContractTest(unittest.TestCase):
         "models/MetricLearning/config.pbtxt":
             "dc7693413e5632c8c998ef657d5b820d4dd8a21f15dad4899aa722eb4c371837",
         "models/DoubleMetricLearning/config.pbtxt":
-            "dca49776035e0026b165b044c222e05c9ee93ba513ae37a18ddf1fd26b614d44",
+            "f1afbd8ff356159be03dece75762db6fcf0a8ca15d250607a8fc1f2a4c3a75f2",
         "models/GNN4Pixel/config.pbtxt":
             "5e3e4d5687f7c9973f14b6d473da3598e15ccdcb56bdc0171f4098c0f3bc5125",
         "models/ModuleMap/config.pbtxt":
             "9f5cd3b9d011f1fae15239849e91f92b204150eadc321484872e777a457d8d71",
     }
 
-    def test_refactor_does_not_change_model_configs(self):
+    def test_model_configs_match_deployed_contracts(self):
         for relative_path, expected in self.EXPECTED_SHA256.items():
             digest = hashlib.sha256((REPO_ROOT / relative_path).read_bytes()).hexdigest()
             self.assertEqual(digest, expected, relative_path)

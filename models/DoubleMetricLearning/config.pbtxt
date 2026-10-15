@@ -127,6 +127,6 @@ parameters: {
 
 version_policy: {
   specific: {
-    versions: [4]
+    versions: [1]
   }
 }
