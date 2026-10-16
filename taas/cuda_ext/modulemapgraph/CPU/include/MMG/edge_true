@@ -1,0 +1,5 @@
+#ifndef MMG_EDGE_TRUE
+#define MMG_EDGE_TRUE
+#include "edge_true.cpp"
+#endif
+

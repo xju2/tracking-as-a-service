@@ -1,0 +1,4 @@
+#ifndef MMG_TRACKS
+#define MMG_TRACKS
+#include "tracks.cpp"
+#endif

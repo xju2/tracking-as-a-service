@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_ERROR_CHECK
+#define MMG_CUDA_ERROR_CHECK
+#include "error_check.cu"
+#endif
+

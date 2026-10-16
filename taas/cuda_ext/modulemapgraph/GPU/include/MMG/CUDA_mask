@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_MASK
+#define MMG_CUDA_MASK
+#include "mask.cu"
+#endif
+

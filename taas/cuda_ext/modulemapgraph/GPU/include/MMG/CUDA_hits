@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_HITS
+#define MMG_CUDA_HITS
+#include "hits.cu"
+#endif
+

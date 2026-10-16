@@ -1,0 +1,5 @@
+#ifndef MMG_EDGES
+#define MMG_EDGES
+#include "edges.cpp"
+#endif
+

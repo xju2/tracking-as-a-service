@@ -1,0 +1,172 @@
+name: "ModuleMap"
+backend: "python"
+
+input [
+  {
+    name: "FEATURES"
+    data_type: TYPE_FP32
+    dims: [ -1, -1 ]
+  }
+]
+
+output [
+  {
+    name: "LABELS"
+    data_type: TYPE_INT64
+    dims: [ -1 ]
+  }
+]
+
+instance_group [
+  { kind: KIND_GPU count: 1 gpus: [0] },
+  { kind: KIND_GPU count: 1 gpus: [1] },
+  { kind: KIND_GPU count: 1 gpus: [2] },
+  { kind: KIND_GPU count: 1 gpus: [3] }
+]
+
+parameters: {
+  key: "debug_input"
+  value: {string_value: "true"}
+}
+
+parameters: {
+  key: "debug_input_rows"
+  value: {string_value: "3"}
+}
+
+parameters: {
+  key: "debug_input_cols"
+  value: {string_value: "20"}
+}
+
+parameters: {
+  key: "debug_input_every_n"
+  value: {string_value: "1"}
+}
+
+parameters: {
+  key: "module_map_pattern_path"
+  value: {string_value: "/models/ModuleMap/1/merged_ttbar_plus_singles_mmg1.3.0_cleaned_mean_rms_replaced_thr5_tol1e-10_float"}
+}
+
+parameters: {
+  key: "onnx_model_path"
+  value: {string_value: "/models/ModuleMap/1/gnn_v9_meanrms.onnx"}
+}
+
+parameters: {
+  key: "module_map_gpu_blocks"
+  value: {string_value: "512"}
+}
+
+parameters: {
+  key: "edge_score_cut"
+  value: {string_value: "0.6"}
+}
+
+# options: dwalk, edge_layer_connector, acts_junction_removal, fastwalk
+parameters: {
+  key: "graph_segmentation_method"
+  value: {string_value: "dwalk"}
+}
+
+parameters: {
+  key: "onnx_use_cuda"
+  value: {string_value: "true"}
+}
+
+parameters: {
+  key: "dwalk_use_gpu"
+  value: {string_value: "true"}
+}
+
+parameters: {
+  key: "dwalk_score_cut"
+  value: {string_value: "0.01"}
+}
+
+parameters: {
+  key: "dwalk_cc_backend"
+  value: {string_value: "custom_cuda"}
+}
+
+parameters: {
+  key: "dwalk_path_metrics"
+  value: {string_value: "score_weighted_length"}
+}
+
+parameters: {
+  key: "dwalk_walk_min"
+  value: {string_value: "0.1"}
+}
+
+parameters: {
+  key: "dwalk_walk_max"
+  value: {string_value: "0.6"}
+}
+
+parameters: {
+  key: "acts_jr_score_cut"
+  value: {string_value: "0.5"}
+}
+
+parameters: {
+  key: "acts_jr_use_gpu"
+  value: {string_value: "true"}
+}
+
+parameters: {
+  key: "acts_jr_cc_backend"
+  value: {string_value: "custom_cuda"}
+}
+
+parameters: {
+  key: "acts_jr_min_candidate_size"
+  value: {string_value: "3"}
+}
+
+parameters: {
+  key: "fastwalk_score_cut"
+  value: {string_value: "0.01"}
+}
+
+parameters: {
+  key: "fastwalk_walk_min"
+  value: {string_value: "0.1"}
+}
+
+parameters: {
+  key: "fastwalk_walk_max"
+  value: {string_value: "0.6"}
+}
+
+parameters: {
+  key: "fastwalk_allow_node_reuse"
+  value: {string_value: "false"}
+}
+
+parameters: {
+  key: "elc_weights_cut"
+  value: {string_value: "0.01"}
+}
+
+parameters: {
+  key: "elc_min_hits"
+  value: {string_value: "3"}
+}
+
+parameters: {
+  key: "elc_block_size"
+  value: {string_value: "512"}
+}
+
+parameters: {
+  key: "elc_max_hits_per_track"
+  value: {string_value: "30"}
+}
+
+version_policy: {
+  specific: {
+    versions: [1]
+  }
+}

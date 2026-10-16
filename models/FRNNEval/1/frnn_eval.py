@@ -10,13 +10,15 @@ from __future__ import annotations
 import csv
 import json
 import os
-import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+
+from taas.edge_classification.filter import run_torch_model
+from taas.torch_models.metric_learning import MetricLearning
 
 
 @dataclass
@@ -68,7 +70,7 @@ INPUT_NODE_FEATURES = [
 
 
 def build_edges_frnn(embedding: torch.Tensor, r_max: float, k_max: int) -> torch.Tensor:
-    """Original FRNN, exactly as in MetricLearning/4/inference.py::build_edges."""
+    """Original FRNN, exactly as in MetricLearning/1/inference.py::build_edges."""
     import frnn
 
     _, idxs, _, _ = frnn.frnn_grid_points(
@@ -177,12 +179,6 @@ class FRNNEval:
     def __init__(self, config: FRNNEvalConfig):
         self.config = config
         print(self.config)
-
-        model_dir = str(self.config.embedding_model_dir.resolve())
-        if model_dir not in sys.path:
-            sys.path.insert(0, model_dir)
-        from metric_learning import MetricLearning
-        from torch_model_inference import run_torch_model
 
         self.run_torch_model = run_torch_model
 
@@ -330,7 +326,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compare FRNN and libFRNN edge lists")
     parser.add_argument("-i", "--input", required=True, help="Node features [N, 44] .pt file")
     parser.add_argument(
-        "-m", "--model", default="../../MetricLearning/4", help="Embedding model directory"
+        "-m", "--model", default="../../MetricLearning/1", help="Embedding model directory"
     )
     parser.add_argument("-o", "--output-dir", default="frnn_eval_outputs")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")

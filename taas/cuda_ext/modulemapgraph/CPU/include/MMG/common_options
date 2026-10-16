@@ -1,0 +1,5 @@
+#ifndef MMG_COMMON_OPTIONS
+#define MMG_COMMON_OPTIONS
+#include "common_options.cpp"
+#endif
+

@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_TRACKS
+#define MMG_CUDA_TRACKS
+#include "tracks.cu"
+#endif
+

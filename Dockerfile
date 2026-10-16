@@ -16,7 +16,7 @@ RUN set -eux; \
   git clone --depth 1 --branch boost-${BOOST_VERSION_DOTTED} https://github.com/boostorg/boost.git /tmp/boost; \
   cd /tmp/boost; \
   git submodule update --init --recursive; \
-  # Include graph library so CMake find_package(boost_graph) succeeds for PyModuleMapGraph
+  # Keep the graph library available for vendored ModuleMapGraph builds.
   ./bootstrap.sh --with-libraries=program_options,serialization,regex,filesystem,test,graph; \
   ./b2 -j2 link=shared cxxflags="-fPIC" variant=release install; \
   rm -rf /tmp/boost; \
@@ -150,7 +150,8 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN pip3 install --upgrade pip
 RUN pip3 install -U pandas matplotlib seaborn git+https://github.com/LAL/trackml-library.git \
 pyyaml click pytest pytest-cov class-resolver scipy pandas matplotlib uproot tqdm \
-ipykernel atlasify networkx seaborn wandb pygraphviz tritonclient[all]
+ipykernel atlasify networkx seaborn wandb pygraphviz tritonclient[all] \
+llvmlite==0.43.0 numba==0.60.0
 
 # Environment variables
 ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/lib:/usr/local/lib"
@@ -181,16 +182,8 @@ RUN cd /tmp && mkdir -p src \
 RUN pip3 install pyyaml astunparse expecttest!=0.2.0 hypothesis numpy psutil pyyaml requests setuptools types-dataclasses \
     typing-extensions>=4.8.0 sympy filelock networkx jinja2 fsspec lintrunner ninja packaging optree>=0.11.0 setuptools
 
-RUN apt-get update -y && apt-get install -y gfortran && apt-get clean -y
-# install magma
-RUN cd /tmp && mkdir -p src \
-  && ${GET} https://icl.utk.edu/projectsfiles/magma/downloads/magma-2.8.0.tar.gz \
-    | ${UNPACK_TO_SRC} \
-  && cmake -B build -S src -DGPU_TARGET="Ampere" -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_BUILD_TYPE=Release \
-  && cmake --build build -- install -j20 \
-  && cd /tmp && rm -rf src
-
-# Get pytorch source and build so that it runs on different GPUs.
+# PyTorch is installed from the CUDA wheel below. The old source-build path
+# needed MAGMA and extra Fortran tooling; keep it disabled for this Triton image.
 ENV TORCH_CUDA_ARCH_LIST="8.0"
 # RUN cd /tmp && \
 # 	git clone --recursive https://github.com/pytorch/pytorch.git && cd pytorch && \
@@ -235,14 +228,31 @@ RUN pip3 install torch_geometric lightning>=2.2
 # Onnx (download of tar.gz does not work out of the box, since the build.sh script requires a git repository)
 RUN pip3 install onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 
-# Rapids AI
-# cudf-cu12 dask-cudf-cu12 cuml-cu12 cugraph-cu12 cuspatial-cu12 cuproj-cu12 cuxfilter-cu12 cucim
-RUN pip3 install --extra-index-url=https://pypi.nvidia.com cudf-cu12 cugraph-cu12 nx-cugraph-cu12 cugraph-pyg-cu12
-# RUN pip install pymodulemapgraph --index-url https://gitlab.cern.ch/api/v4/projects/210408/packages/pypi/simple
+# DML fastWalkthrough imports numba at Triton model-load time. Keep this near
+# the end so cached earlier dependency layers cannot hide a missing install.
+RUN python -m pip install --no-cache-dir llvmlite==0.43.0 numba==0.60.0 \
+  && python -c "import numba, llvmlite; print('numba', numba.__version__, 'llvmlite', llvmlite.__version__)"
 
-RUN git clone https://gitlab.cern.ch/gnn4itkteam/PyModuleMapGraph.git \
-  && cd PyModuleMapGraph \
-  && pip3 install .
+# ONNX Runtime C++ GPU distribution. The Python wheel above is enough for Python
+# inference, but the ACTS-style ModuleMap edge-classifier path needs C++ headers
+# and linkable shared libraries for our PyTorch extension.
+ARG ONNXRUNTIME_VERSION=1.20.1
+ENV ONNXRUNTIME_ROOT=/usr/local/onnxruntime
+RUN cd /tmp && \
+    wget https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}.tgz && \
+    tar -xzf onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}.tgz && \
+    mkdir -p ${ONNXRUNTIME_ROOT} && \
+    cp -a onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}/include ${ONNXRUNTIME_ROOT}/ && \
+    cp -a onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}/lib ${ONNXRUNTIME_ROOT}/ && \
+    echo "${ONNXRUNTIME_ROOT}/lib" > /etc/ld.so.conf.d/onnxruntime.conf && \
+    ldconfig && \
+    rm -rf /tmp/onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION} /tmp/onnxruntime-linux-x64-gpu-${ONNXRUNTIME_VERSION}.tgz
+ENV LD_LIBRARY_PATH=${ONNXRUNTIME_ROOT}/lib:$LD_LIBRARY_PATH
 
-ENTRYPOINT []
-CMD ["/bin/bash"]
+# Do not install RAPIDS or PyModuleMapGraph here. The current server code does
+# not import RAPIDS, and the standalone ModuleMap path will vendor/link the
+# needed ModuleMapGraph C++/CUDA sources directly instead of depending on the
+# PyModuleMapGraph Python package.
+
+ENTRYPOINT ["/opt/tritonserver/bin/tritonserver"]
+CMD []

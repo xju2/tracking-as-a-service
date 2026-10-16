@@ -9,17 +9,24 @@ srun --job-name=TritonTest -C "gpu&hbm80g" -N 1 -G 1 -c 10 -n 1 -t 4:00:00 -A m3
   -q interactive /bin/bash -c "./scripts/start-tritonserver.sh -o triton_ready.txt"
 ```
 
+```bash
+srun --job-name=TritonTest -C "gpu&hbm80g" -N 1 -G 4 -c 128 -n 1 -t 4:00:00 -A m3443 \
+  -q interactive /bin/bash -c "./scripts/start-tritonserver.sh -o triton_ready.txt"
+```
+
 Or, launch the server with a regular batch job for 48 hours
 ```bash
 sbatch -G 1 request_servers.sh
 ```
 
-2. Run the client:
+2. Run a standalone inference check:
 ```bash
 podman-hpc run -it --rm --ipc=host --net=host --ulimit memlock=-1 --ulimit stack=67108864 \
   -v ${PWD}:/workspace/ -w /workspace \
   -v /global/cfs/cdirs/m3443/data/for_alina:/global/cfs/cdirs/m3443/data/for_alina \
-  docker.io/docexoty/tritonserver:latest python models/MetricLearning/2/client.py -i /global/cfs/cdirs/m3443/data/for_alina/all_input_node_features.pt
+  docker.io/docexoty/tritonserver:latest python models/MetricLearning/1/inference.py \
+  -m models/MetricLearning/1 \
+  -i /global/cfs/cdirs/m3443/data/for_alina/all_input_node_features.pt
 ```
 
 ## Models

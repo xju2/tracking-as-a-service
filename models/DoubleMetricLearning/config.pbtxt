@@ -18,16 +18,25 @@ output [
 ]
 
 
+#instance_group [
+#  {
+#    count: 1
+#    kind: KIND_GPU
+#  }
+#]
+
+# Explicit 4-GPU placement. Use this only when the Triton job exposes GPUs
+# 0, 1, 2, and 3 inside the container.
 instance_group [
-  {
-    count: 1
-    kind: KIND_GPU
-   }
+  { kind: KIND_GPU count: 1 gpus: [0] },
+  { kind: KIND_GPU count: 1 gpus: [1] },
+  { kind: KIND_GPU count: 1 gpus: [2] },
+  { kind: KIND_GPU count: 1 gpus: [3] }
 ]
 
 parameters: {
   key: "auto_cast",
-  value: {string_value: "False"}
+  value: {string_value: "True"}
 }
 
 parameters: {
@@ -36,6 +45,88 @@ parameters: {
 }
 
 parameters: {
-  key: "use_dpw",
-  value: {string_value: "False"}
+  key: "collect_timing",
+  value: {string_value: "True"}
+}
+
+parameters: {
+  key: "filter_timing_skip_events",
+  value: {string_value: "5"}
+}
+
+parameters: {
+  key: "timing_report_interval",
+  value: {string_value: "100"}
+}
+
+# options: fastwalk, junction_removal, dwalk, edge_layer_connector
+parameters: {
+  key: "graph_segmentation_method",
+  value: {string_value: "dwalk"}
+}
+
+parameters: {
+  key: "dwalk_use_gpu",
+  value: {string_value: "true"}
+}
+
+parameters: {
+  key: "dwalk_cc_backend",
+  value: {string_value: "custom_cuda"}
+}
+
+parameters: {
+  key: "dwalk_path_metrics",
+  value: {string_value: "score_weighted_length"}
+}
+
+parameters: {
+  key: "jr_use_gpu",
+  value: {string_value: "true"}
+}
+
+parameters: {
+  key: "jr_cc_backend",
+  value: {string_value: "custom_cuda"}
+}
+
+parameters: {
+  key: "acts_jr_use_gpu",
+  value: {string_value: "true"}
+}
+
+parameters: {
+  key: "acts_jr_cc_backend",
+  value: {string_value: "custom_cuda"}
+}
+
+parameters: {
+  key: "acts_jr_min_candidate_size",
+  value: {string_value: "3"}
+}
+
+parameters: {
+  key: "elc_weights_cut",
+  value: {string_value: "0.6"}
+}
+
+parameters: {
+  key: "elc_min_hits",
+  value: {string_value: "3"}
+}
+
+parameters: {
+  key: "elc_block_size",
+  value: {string_value: "512"}
+}
+
+parameters: {
+  key: "elc_max_hits_per_track",
+  value: {string_value: "30"}
+}
+
+version_policy: {
+  specific: {
+    versions: [1]
+  }
 }

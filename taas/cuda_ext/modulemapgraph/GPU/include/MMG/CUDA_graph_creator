@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_GRAPH_CREATOR
+#define MMG_CUDA_GRAPH_CREATOR
+#include "graph_creator.cu"
+#endif
+

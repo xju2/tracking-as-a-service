@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_GEOMETRIC_CUTS
+#define MMG_CUDA_GEOMETRIC_CUTS
+#include "geometric_cuts.cu"
+#endif
+

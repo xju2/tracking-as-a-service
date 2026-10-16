@@ -1,0 +1,5 @@
+#ifndef MMG_STRING_UTILS
+#define MMG_STRING_UTILS
+#include "string_utils.hpp"
+#endif
+

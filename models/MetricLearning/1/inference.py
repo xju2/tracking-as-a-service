@@ -4,20 +4,32 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import fastwalkthrough as walkutils
-import frnn
+from taas.graph_segmentation import fastwalkthrough as walkutils
+from taas.graph_construction.metric_learning import MetricLearningGraphConstructor
+
+build_edges = MetricLearningGraphConstructor.build_edges
 import numpy as np
 import torch
 import torch.cuda.nvtx as nvtx
-from interaction_gnn import (
+from taas.torch_models.interaction_gnn import (
     ChainedInteractionGNN2,
     GNNFilterJitable,
     RecurrentInteractionGNN2,
 )
-from metric_learning import MetricLearning
+from taas.torch_models.metric_learning import MetricLearning
 from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
-from torch_model_inference import run_gnn_filter_optimized, run_torch_model
+from functools import partial
+from taas.edge_classification.filter import (
+    FilterProfile,
+    run_gnn_filter_optimized as _run_gnn_filter_optimized,
+    run_torch_model as _run_torch_model,
+)
+
+run_gnn_filter_optimized = partial(
+    _run_gnn_filter_optimized, profile=FilterProfile.METRIC_CURRENT
+)
+run_torch_model = partial(_run_torch_model, profile=FilterProfile.METRIC_CURRENT)
 
 
 torch.manual_seed(42)
@@ -34,34 +46,6 @@ def to_trk_tensor(trk, device):
     # Finally -> torch tensor on correct device
     return torch.as_tensor(trk, dtype=torch.long, device=device)
 
-
-def build_edges(
-    query: torch.Tensor,
-    database: torch.Tensor,
-    r_max: float = 0.1,
-    k_max: int = 1000,
-) -> torch.Tensor:
-    # Compute edges
-    _, idxs, _, _ = frnn.frnn_grid_points(
-        points1=query.unsqueeze(0),
-        points2=database.unsqueeze(0),
-        lengths1=None,
-        lengths2=None,
-        K=k_max,
-        r=r_max,
-        grid=None,
-        return_nn=False,
-        return_sorted=True,
-    )
-
-    idxs: torch.Tensor = idxs.squeeze().int()
-    ind = torch.arange(idxs.shape[0], device=query.device).repeat(idxs.shape[1], 1).T.int()
-    positive_idxs = idxs >= 0
-    edge_list = torch.stack([ind[positive_idxs], idxs[positive_idxs]]).long()
-
-    # Remove self-loops
-    edge_list = edge_list[:, edge_list[0] != edge_list[1]]
-    return edge_list
 
 
 @dataclass

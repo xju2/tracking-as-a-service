@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_GRAPH
+#define MMG_CUDA_GRAPH
+#include "graph.cu"
+#endif
+

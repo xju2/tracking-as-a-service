@@ -1,0 +1,5 @@
+#ifndef MMG_TTREE_HITS
+#define MMG_TTREE_HITS
+#include "TTree_hits.cpp"
+#endif
+

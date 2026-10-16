@@ -3,28 +3,46 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
-import fastwalkthrough as walkutils
-import frnn
+from taas.graph_construction.double_metric_learning import DoubleMetricLearningGraphConstructor
+
+build_edges = DoubleMetricLearningGraphConstructor.build_edges
 import numpy as np
 import torch
 import torch.cuda.nvtx as nvtx
-from dp_walkthrough import dp_walk_through, get_simple_path as get_dpw_simple_path
-from double_metric_learning import DoubleMetricLearning
-from interaction_gnn import (
+from taas.torch_models.double_metric_learning import DoubleMetricLearning
+from taas.torch_models.interaction_gnn import (
     ChainedInteractionGNN2,
     GNNFilterJitable,
     RecurrentInteractionGNN2,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from taas.graph_segmentation import fastwalkthrough as walkutils
+from taas.graph_segmentation.acts_junction_removal import acts_junction_removal
+from taas.graph_segmentation.dwalk import dwalk, get_simple_path as get_dwalk_simple_path
+from taas.graph_segmentation.edge_layer_connector import edge_layer_connector
+from taas.graph_segmentation.junction_removal import junction_removal
 from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
-from torch_model_inference import run_gnn_filter, run_torch_model
+from functools import partial
+from taas.edge_classification.filter import FilterProfile, run_gnn_filter as _run_gnn_filter, run_torch_model as _run_torch_model
+
+run_gnn_filter = partial(_run_gnn_filter, profile=FilterProfile.DOUBLE_METRIC_CURRENT)
+run_torch_model = partial(_run_torch_model, profile=FilterProfile.DOUBLE_METRIC_CURRENT)
 
 torch.manual_seed(42)
 torch.set_float32_matmul_precision("high")
 
 
 def to_trk_tensor(trk, device):
+    if isinstance(trk, torch.Tensor):
+        return trk.to(device=device, dtype=torch.long)
+
     # Convert numba.typed.List or Python list -> numpy
     if not isinstance(trk, np.ndarray):
         trk = np.array(trk, dtype=np.int64)
@@ -35,33 +53,18 @@ def to_trk_tensor(trk, device):
     return torch.as_tensor(trk, dtype=torch.long, device=device)
 
 
-def build_edges(
-    query: torch.Tensor,
-    database: torch.Tensor,
-    r_max: float = 0.1,
-    k_max: int = 1000,
-) -> torch.Tensor:
-    # Compute edges
-    _, idxs, _, _ = frnn.frnn_grid_points(
-        points1=query.unsqueeze(0),
-        points2=database.unsqueeze(0),
-        lengths1=None,
-        lengths2=None,
-        K=k_max,
-        r=r_max,
-        grid=None,
-        return_nn=False,
-        return_sorted=True,
-    )
+def synchronize_if_cuda(device) -> None:
+    if str(device).startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.synchronize()
 
-    idxs: torch.Tensor = idxs.squeeze().int()
-    ind = torch.arange(idxs.shape[0], device=query.device).repeat(idxs.shape[1], 1).T.int()
-    positive_idxs = idxs >= 0
-    edge_list = torch.stack([ind[positive_idxs], idxs[positive_idxs]]).long()
 
-    # Remove self-loops
-    edge_list = edge_list[:, edge_list[0] != edge_list[1]]
-    return edge_list
+def iter_track_tensors(tracks):
+    for track in tracks:
+        if hasattr(track, "grouped_hit_ids") and hasattr(track, "counts"):
+            yield from track
+        else:
+            yield track
+
 
 
 @dataclass
@@ -71,13 +74,32 @@ class MetricLearningInferenceConfig:
     auto_cast: bool
     compiling: bool
     debug: bool
-    use_dpw: bool = False
+    graph_segmentation_method: str = "fastwalk"
+    use_dwalk: bool = False
+    dwalk_use_gpu: bool = True
+    dwalk_cc_backend: str = "custom_cuda"
+    dwalk_path_metrics: str = "score_weighted_length"
+    jr_use_gpu: bool = True
+    jr_cc_backend: str = "custom_cuda"
+    jr_score_cut: float = 0.9
+    jr_junction_cut: float = 0.2
+    jr_min_chain_length: int = 5
+    jr_skip_remove_cycles: bool = True
+    acts_jr_use_gpu: bool = True
+    acts_jr_cc_backend: str = "custom_cuda"
+    acts_jr_min_candidate_size: int = 3
+    elc_weights_cut: float = 0.01
+    elc_min_hits: int = 3
+    elc_block_size: int = 512
+    elc_max_hits_per_track: int = 30
     save_debug_data: bool = False
     r_max: float = 0.14
     k_max: int = 1000
     filter_cut: float = 0.01
     filter_batches: int = 10
-    cc_cut: float = 0.01
+    collect_timing: bool = False
+    filter_timing_skip_events: int = 0
+    cc_cut: float | None = None
     walk_min: float = 0.1
     walk_max: float = 0.6
     embedding_node_features: str = "r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2"
@@ -105,11 +127,24 @@ class MetricLearningInferenceConfig:
         self.model_path = (
             Path(self.model_path) if isinstance(self.model_path, str) else self.model_path
         )
+        self.graph_segmentation_method = self.graph_segmentation_method.lower()
+        if self.graph_segmentation_method == "fastwalk" and self.use_dwalk:
+            self.graph_segmentation_method = "dwalk"
+        if self.cc_cut is None:
+            self.cc_cut = (
+                0.5
+                if self.graph_segmentation_method
+                in {"acts_junction_removal", "acts_jr"}
+                else 0.01
+            )
 
 
 class MetricLearningInference:
     def __init__(self, config: MetricLearningInferenceConfig):
         self.config = config
+        self.last_timing: dict[str, float] = {}
+        self._timed_event_count = 0
+        self._skip_timing_this_event = False
         print(self.config)
         model_path = (
             Path(self.config.model_path)
@@ -173,19 +208,17 @@ class MetricLearningInference:
             torch.set_float32_matmul_precision("high")
             # self.embedding_model = torch._dynamo.optimize("inductor")(self.embedding_model)
             self.embedding_model = torch.compile(
-                self.embedding_model, dynamic=True, mode="max-autotune-no-cudagraphs"
+                self.embedding_model, mode="reduce-overhead"
             )
             # # Compile GNNFilter
             self.filter_model.gnn = torch.compile(
-                self.filter_model.gnn, dynamic=True, mode="max-autotune-no-cudagraphs"
+                self.filter_model.gnn, mode="reduce-overhead"
             )
             self.filter_model.net = torch.compile(
-                self.filter_model.net, dynamic=True, mode="max-autotune-no-cudagraphs"
+                self.filter_model.net, mode="reduce-overhead"
             )
             # # Compile interaction gnn
-            self.gnn_model = torch.compile(
-                self.gnn_model, dynamic=True, mode="max-autotune-no-cudagraphs"
-            )
+            self.gnn_model = torch.compile(self.gnn_model, mode="reduce-overhead")
             # self.embedding_model.eval()
             # self.filter_model.eval()
             # self.gnn_model.eval()
@@ -237,12 +270,25 @@ class MetricLearningInference:
             "cluster_eta_2",
         ]
 
+    def _record_timing(self, timing_key: str, duration_seconds: float) -> None:
+        if self._skip_timing_this_event:
+            return
+        self.last_timing[timing_key] = duration_seconds
+
     def forward(
         self,
         node_features: torch.Tensor,
         hit_id: torch.Tensor | None = None,
         nvtx_enabled: bool = False,
     ):
+        self.last_timing.clear()
+        if self.config.collect_timing:
+            self._timed_event_count += 1
+            self._skip_timing_this_event = (
+                self._timed_event_count <= self.config.filter_timing_skip_events
+            )
+        else:
+            self._skip_timing_this_event = False
         device = self.config.device
         use_nvtx = nvtx_enabled and torch.cuda.is_available() and str(device).startswith("cuda")
 
@@ -315,6 +361,7 @@ class MetricLearningInference:
         if use_nvtx:
             nvtx.range_push("GNN Filtering")
 
+        filter_start_time = time.perf_counter() if self.config.collect_timing else None
         edge_scores, edge_index, _ = run_gnn_filter(
             model=self.filter_model,
             auto_cast=self.config.auto_cast,
@@ -322,6 +369,10 @@ class MetricLearningInference:
             x=filtering_inputs,
             edge_index=edge_index,
         )
+        if self.config.collect_timing:
+            if str(device).startswith("cuda") and torch.cuda.is_available():
+                torch.cuda.synchronize()
+            self._record_timing("filtering_seconds", time.perf_counter() - filter_start_time)
 
         if use_nvtx:
             torch.cuda.synchronize()
@@ -394,10 +445,17 @@ class MetricLearningInference:
             torch.cuda.synchronize()
             nvtx.range_pop()
 
-        good_edge_mask = edge_scores > self.config.cc_cut
-        edge_index = edge_index[:, good_edge_mask]
-        edge_scores = edge_scores[good_edge_mask]
-        del good_edge_mask
+        segmentation_method = self.config.graph_segmentation_method
+        if segmentation_method not in {
+            "junction_removal",
+            "jr",
+            "edge_layer_connector",
+            "elc",
+        }:
+            good_edge_mask = edge_scores > self.config.cc_cut
+            edge_index = edge_index[:, good_edge_mask]
+            edge_scores = edge_scores[good_edge_mask]
+            del good_edge_mask
 
         score_name = "edge_scores"
         graph = Data(
@@ -410,38 +468,131 @@ class MetricLearningInference:
         graph = RemoveIsolatedNodes()(graph)
 
         all_trkx = {}
-        if self.config.use_dpw:
-            cpu_graph = graph.cpu()
-            cpu_R = R.cpu()
-            all_trkx["cc"], cpu_graph = get_dpw_simple_path(
-                cpu_graph, score_name, self.config.cc_cut
+        if segmentation_method == "dwalk":
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
+            all_trkx["cc"], dwalk_graph = get_dwalk_simple_path(
+                graph,
+                score_name,
+                self.config.cc_cut,
+                use_gpu=self.config.dwalk_use_gpu,
+                cc_backend=self.config.dwalk_cc_backend,
+                return_tensors=True,
             )
-            all_trkx["walk"] = dp_walk_through(
-                cpu_graph,
+            all_trkx["walk"] = dwalk(
+                dwalk_graph,
                 score_name,
                 self.config.walk_min,
                 self.config.walk_max,
-                "score_weighted_length",
+                self.config.dwalk_path_metrics,
+                use_gpu=self.config.dwalk_use_gpu,
+                cc_backend=self.config.dwalk_cc_backend,
+                return_tensors=True,
             )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
+        elif segmentation_method in {"junction_removal", "jr"}:
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
+            all_trkx["cc"] = []
+            all_trkx["walk"] = junction_removal(
+                graph,
+                score_name,
+                score_cut=self.config.jr_score_cut,
+                junction_cut=self.config.jr_junction_cut,
+                min_chain_length=self.config.jr_min_chain_length,
+                skip_remove_cycles=self.config.jr_skip_remove_cycles,
+                use_gpu=self.config.jr_use_gpu,
+                cc_backend=self.config.jr_cc_backend,
+            )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
+        elif segmentation_method in {"acts_junction_removal", "acts_jr"}:
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
+            all_trkx["cc"] = []
+            all_trkx["walk"] = acts_junction_removal(
+                graph,
+                score_name,
+                min_candidate_size=self.config.acts_jr_min_candidate_size,
+                use_gpu=self.config.acts_jr_use_gpu,
+                cc_backend=self.config.acts_jr_cc_backend,
+            )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
+        elif segmentation_method in {"edge_layer_connector", "elc"}:
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
+            all_trkx["cc"] = []
+            all_trkx["walk"] = edge_layer_connector(
+                graph,
+                score_name,
+                weights_cut=self.config.elc_weights_cut,
+                min_hits=self.config.elc_min_hits,
+                block_size=self.config.elc_block_size,
+                max_hits_per_track=self.config.elc_max_hits_per_track,
+            )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
         else:
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                segmentation_start_time = time.perf_counter()
+            else:
+                segmentation_start_time = None
             all_trkx["cc"], graph = walkutils.get_simple_path(graph)
             all_trkx["walk"] = walkutils.walk_through(
                 graph, score_name, self.config.walk_min, self.config.walk_max, False
             )
+            if self.config.collect_timing:
+                synchronize_if_cuda(device)
+                self._record_timing(
+                    "graph_segmentation_seconds",
+                    time.perf_counter() - segmentation_start_time,
+                )
 
         if use_nvtx:
             torch.cuda.synchronize()
             nvtx.range_pop()
 
-        tracks = all_trkx["cc"] + list(all_trkx["walk"])
+        tracks = list(iter_track_tensors(all_trkx["cc"])) + list(
+            iter_track_tensors(all_trkx["walk"])
+        )
         total_length = sum(len(trk) + 1 for trk in tracks)
         track_candidates = np.empty(total_length, dtype=int)
 
         i = 0
+        track_r = R
         for trk in tracks:
-            trk_device = "cpu" if self.config.use_dpw else device
-            track_r = cpu_R if self.config.use_dpw else R
-            trk_tensor = to_trk_tensor(trk, trk_device)
+            trk_tensor = to_trk_tensor(trk, device)
             sorted_trk = trk_tensor[torch.argsort(track_r[trk_tensor])]
 
             n = len(sorted_trk)
@@ -468,22 +619,59 @@ def create_metric_learning_end2end_rel24(
     precision: str,
     auto_cast: bool,
     compiling: bool,
-    use_dpw: bool,
+    use_dwalk: bool,
     save_data_for_debug: bool,
+    graph_segmentation_method: str = "fastwalk",
+    dwalk_use_gpu: bool = True,
+    dwalk_cc_backend: str = "custom_cuda",
+    dwalk_path_metrics: str = "score_weighted_length",
+    jr_use_gpu: bool = True,
+    jr_cc_backend: str = "custom_cuda",
+    jr_score_cut: float = 0.9,
+    jr_junction_cut: float = 0.2,
+    jr_min_chain_length: int = 5,
+    jr_skip_remove_cycles: bool = True,
+    acts_jr_use_gpu: bool = True,
+    acts_jr_cc_backend: str = "custom_cuda",
+    acts_jr_min_candidate_size: int = 3,
+    elc_weights_cut: float = 0.01,
+    elc_min_hits: int = 3,
+    elc_block_size: int = 512,
+    elc_max_hits_per_track: int = 30,
+    cc_cut: float | None = None,
+    filter_timing_skip_events: int = 0,
 ):
     config = MetricLearningInferenceConfig(
         model_path=model_path,
         device=device,
         auto_cast=auto_cast,
         compiling=compiling,
-        use_dpw=use_dpw,
+        graph_segmentation_method=graph_segmentation_method,
+        use_dwalk=use_dwalk,
+        dwalk_use_gpu=dwalk_use_gpu,
+        dwalk_cc_backend=dwalk_cc_backend,
+        dwalk_path_metrics=dwalk_path_metrics,
+        jr_use_gpu=jr_use_gpu,
+        jr_cc_backend=jr_cc_backend,
+        jr_score_cut=jr_score_cut,
+        jr_junction_cut=jr_junction_cut,
+        jr_min_chain_length=jr_min_chain_length,
+        jr_skip_remove_cycles=jr_skip_remove_cycles,
+        acts_jr_use_gpu=acts_jr_use_gpu,
+        acts_jr_cc_backend=acts_jr_cc_backend,
+        acts_jr_min_candidate_size=acts_jr_min_candidate_size,
+        elc_weights_cut=elc_weights_cut,
+        elc_min_hits=elc_min_hits,
+        elc_block_size=elc_block_size,
+        elc_max_hits_per_track=elc_max_hits_per_track,
         debug=debug,
         save_debug_data=save_data_for_debug,
         r_max=0.14,
         k_max=1000,
         filter_cut=0.01,
-        filter_batches=10,
-        cc_cut=0.01,
+        filter_batches=1,
+        filter_timing_skip_events=max(filter_timing_skip_events, 0),
+        cc_cut=cc_cut,
         walk_min=0.1,
         walk_max=0.6,
         embedding_node_features="r, phi, z, cluster_x_1, cluster_y_1, cluster_z_1, cluster_x_2, cluster_y_2, cluster_z_2, count_1, charge_count_1, loc_eta_1, loc_phi_1, localDir0_1, localDir1_1, localDir2_1, lengthDir0_1, lengthDir1_1, lengthDir2_1, glob_eta_1, glob_phi_1, eta_angle_1, phi_angle_1, count_2, charge_count_2, loc_eta_2, loc_phi_2, localDir0_2, localDir1_2, localDir2_2, lengthDir0_2, lengthDir1_2, lengthDir2_2, glob_eta_2, glob_phi_2, eta_angle_2, phi_angle_2",
@@ -504,14 +692,94 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Inference for Metric Learning")
     parser.add_argument("-i", "--input", type=str, default="node_features.pt", help="Input file")
-    parser.add_argument("-m", "--model", type=str, default="../3", help="Model path")
+    parser.add_argument("-m", "--model", type=str, default=".", help="Model path")
     parser.add_argument("-p", "--precision", type=str, default="highest", help="Precision")
     parser.add_argument("-a", "--auto_cast", action="store_true", help="Use autocast")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug mode")
     parser.add_argument("-d", "--device", default="cuda", help="Device")
     parser.add_argument("-t", "--timing", action="store_true", help="Time the inference")
     parser.add_argument("-c", "--compiling", action="store_true", help="Use compiling")
-    parser.add_argument("--use-dpw", action="store_true", help="Use DP walkthrough")
+    parser.add_argument(
+        "--graph-segmentation-method",
+        default="fastwalk",
+        choices=(
+            "fastwalk",
+            "dwalk",
+            "junction_removal",
+            "jr",
+            "acts_junction_removal",
+            "acts_jr",
+            "edge_layer_connector",
+            "elc",
+        ),
+        help="Graph segmentation method",
+    )
+    parser.add_argument("--use-dwalk", action="store_true", help="Use D-WALK")
+    parser.add_argument(
+        "--dwalk-use-gpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run D-WALK on CUDA when available",
+    )
+    parser.add_argument(
+        "--dwalk-cc-backend",
+        dest="dwalk_cc_backend",
+        default="custom_cuda",
+        choices=("auto", "scipy", "custom_cuda"),
+        help="Connected-components backend for D-WALK",
+    )
+    parser.add_argument(
+        "--dwalk-path-metrics",
+        dest="dwalk_path_metrics",
+        default="score_weighted_length",
+        choices=("score_weighted_length", "length"),
+        help="Path metric for D-WALK",
+    )
+    parser.add_argument(
+        "--jr-use-gpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run Junction Removal CC on CUDA when available",
+    )
+    parser.add_argument(
+        "--jr-cc-backend",
+        default="custom_cuda",
+        choices=("auto", "scipy", "custom_cuda"),
+        help="Connected-components backend for Junction Removal",
+    )
+    parser.add_argument("--jr-score-cut", type=float, default=0.9, help="High-score simple-chain cut for Junction Removal")
+    parser.add_argument("--jr-junction-cut", type=float, default=0.2, help="Junction edge score cut")
+    parser.add_argument("--jr-min-chain-length", type=int, default=5, help="Minimum simple-chain length")
+    parser.add_argument("--jr-remove-cycles", action="store_true", help="Orient/remove cycles before Junction Removal")
+    parser.add_argument(
+        "--acts-jr-use-gpu",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run ACTS-style Junction Removal CC on CUDA when available",
+    )
+    parser.add_argument(
+        "--acts-jr-cc-backend",
+        default="custom_cuda",
+        choices=("auto", "scipy", "custom_cuda"),
+        help="Connected-components backend for ACTS-style Junction Removal",
+    )
+    parser.add_argument("--acts-jr-min-candidate-size", type=int, default=3, help="Minimum ACTS-style JR candidate size")
+    parser.add_argument("--elc-weights-cut", type=float, default=0.01, help="EdgeLayerConnector internal edge weight cut")
+    parser.add_argument("--elc-min-hits", type=int, default=3, help="EdgeLayerConnector minimum hits per track")
+    parser.add_argument("--elc-block-size", type=int, default=512, help="EdgeLayerConnector CUDA block size")
+    parser.add_argument("--elc-max-hits-per-track", type=int, default=30, help="EdgeLayerConnector maximum hits per track")
+    parser.add_argument(
+        "--cc-cut",
+        type=float,
+        default=None,
+        help="Pre-segmentation GNN edge score cut; defaults to 0.5 for ACTS JR and 0.01 otherwise",
+    )
+    parser.add_argument(
+        "--filter-timing-skip-events",
+        type=int,
+        default=0,
+        help="Exclude the first N filtered events from timing averages",
+    )
     parser.add_argument(
         "-s", "--save-data-for-debug", action="store_true", help="Save debugging data"
     )
@@ -527,8 +795,27 @@ if __name__ == "__main__":
         precision=args.precision,
         auto_cast=args.auto_cast,
         compiling=args.compiling,
-        use_dpw=args.use_dpw,
+        use_dwalk=args.use_dwalk,
         save_data_for_debug=args.save_data_for_debug,
+        graph_segmentation_method=args.graph_segmentation_method,
+        dwalk_use_gpu=args.dwalk_use_gpu,
+        dwalk_cc_backend=args.dwalk_cc_backend,
+        dwalk_path_metrics=args.dwalk_path_metrics,
+        jr_use_gpu=args.jr_use_gpu,
+        jr_cc_backend=args.jr_cc_backend,
+        jr_score_cut=args.jr_score_cut,
+        jr_junction_cut=args.jr_junction_cut,
+        jr_min_chain_length=args.jr_min_chain_length,
+        jr_skip_remove_cycles=not args.jr_remove_cycles,
+        acts_jr_use_gpu=args.acts_jr_use_gpu,
+        acts_jr_cc_backend=args.acts_jr_cc_backend,
+        acts_jr_min_candidate_size=args.acts_jr_min_candidate_size,
+        elc_weights_cut=args.elc_weights_cut,
+        elc_min_hits=args.elc_min_hits,
+        elc_block_size=args.elc_block_size,
+        elc_max_hits_per_track=args.elc_max_hits_per_track,
+        cc_cut=args.cc_cut,
+        filter_timing_skip_events=args.filter_timing_skip_events,
     )
     print("start a warm-up run.")
     node_features = torch.load(args.input)

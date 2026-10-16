@@ -1,0 +1,5 @@
+#ifndef MMG_PARTICLE
+#define MMG_PARTICLE
+#include "particle.cpp"
+#endif
+

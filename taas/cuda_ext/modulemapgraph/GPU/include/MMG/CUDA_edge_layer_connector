@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_EDGE_LAYER_CONNECTOR
+#define MMG_CUDA_EDGE_LAYER_CONNECTOR
+#include "edge_layer_connector.cu"
+#endif
+

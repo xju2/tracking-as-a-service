@@ -1,0 +1,5 @@
+#ifndef MMG_CUDA_EDGES
+#define MMG_CUDA_EDGES
+#include "edges.cu"
+#endif
+
