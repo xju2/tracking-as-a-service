@@ -170,3 +170,5 @@ jobs/
 *.ipynb_checkpoints
 *.pt
 frnn_eval_outputs/
+
+CLAUDE.md
