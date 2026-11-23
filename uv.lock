@@ -450,6 +450,14 @@ version = "0.0.0"
 source = { git = "https://github.com/xju2/FRNN?rev=9b57ef4a7c194e2f1372591d3ea33ab254295a51#9b57ef4a7c194e2f1372591d3ea33ab254295a51" }
 
 [[package]]
+name = "frnn-cuda"
+version = "1.0.1"
+source = { git = "https://github.com/xju2/libFRNN?rev=b06fc3b8fe0d8c7f985fcd149e6b23c73c240901#b06fc3b8fe0d8c7f985fcd149e6b23c73c240901" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[[package]]
 name = "frozenlist"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -530,6 +538,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/77/cd/9be253869fc42e764
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6c/c0/a98505f18594f1bce828bb159cec0fcf9860562f1a2c85913409fc8f3d9e/fsspec-2026.9.0-py3-none-any.whl", hash = "sha256:8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f", size = 221738, upload-time = "2026-09-18T17:50:41.341Z" },
 ]
+
+[[package]]
+name = "graph-segment"
+version = "0.1.0"
+source = { git = "https://github.com/xju2/graph_segment_for_gnn_tracking?rev=8cdb7b97389d9b14ec405905928b58bd6ddf6a8f#8cdb7b97389d9b14ec405905928b58bd6ddf6a8f" }
 
 [[package]]
 name = "identify"
@@ -1383,6 +1396,8 @@ version = "2.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "frnn" },
+    { name = "frnn-cuda" },
+    { name = "graph-segment" },
     { name = "numba" },
     { name = "prefix-sum" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1401,6 +1416,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "frnn", git = "https://github.com/xju2/FRNN?rev=9b57ef4a7c194e2f1372591d3ea33ab254295a51" },
+    { name = "frnn-cuda", git = "https://github.com/xju2/libFRNN?rev=b06fc3b8fe0d8c7f985fcd149e6b23c73c240901" },
+    { name = "graph-segment", git = "https://github.com/xju2/graph_segment_for_gnn_tracking?rev=8cdb7b97389d9b14ec405905928b58bd6ddf6a8f" },
     { name = "numba", specifier = ">=0.62.1,<0.63" },
     { name = "prefix-sum", git = "https://github.com/asnaylor/prefix_sum?rev=008f3239e3f3e65e48c04796d606c5595f2417bf" },
     { name = "scipy", specifier = ">=1.15,<2" },
