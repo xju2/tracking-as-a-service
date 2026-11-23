@@ -55,8 +55,13 @@ class DeterministicAggregation(Aggregation):
     def forward(self, x, index=None, ptr=None, dim_size=None, dim=-2):
         if ptr is None:
             dim_size = int(index.max()) + 1 if dim_size is None else dim_size
-            perm, ptr = sort_by_index(index, dim_size)
-            x = x.index_select(dim, perm)
+            if bool((index[1:] >= index[:-1]).all()):
+                # Already sorted by target (run_gnn_filter sorts the edges): reuse that order.
+                ptr = torch.zeros(dim_size + 1, dtype=torch.long, device=index.device)
+                ptr[1:] = torch.cumsum(torch.bincount(index, minlength=dim_size), 0)
+            else:
+                perm, ptr = sort_by_index(index, dim_size)
+                x = x.index_select(dim, perm)
         # With ptr given, Aggregation.reduce does a segment reduce instead of a scatter.
         return self.reduce(x, None, ptr, dim_size, dim, reduce=self.reduce_op)
 

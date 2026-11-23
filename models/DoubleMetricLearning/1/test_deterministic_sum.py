@@ -25,6 +25,10 @@ def test_deterministic_sum(device="cuda" if torch.cuda.is_available() else "cpu"
     det_conv = make_deterministic(copy.deepcopy(conv))
     assert torch.allclose(det_conv(x, edge_index), conv(x, edge_index), atol=1e-5)
     assert torch.equal(det_conv(x, edge_index), det_conv(x, edge_index))
+    # Edges already sorted by target, as run_gnn_filter passes them: the sort is reused.
+    sorted_edges = edge_index[:, torch.argsort(edge_index[1], stable=True)]
+    assert torch.allclose(det_conv(x, sorted_edges), conv(x, sorted_edges), atol=1e-5)
+    assert torch.equal(det_conv(x, sorted_edges), det_conv(x, edge_index))
     print(f"deterministic sums OK on {device}")
 
 
