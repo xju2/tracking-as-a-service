@@ -1,4 +1,6 @@
-"""Per-stage latency and track count of DoubleMetricLearning versions 1 and 2.
+"""Per-stage latency and track count of a model's versions 1 and 2.
+
+--model chooses DoubleMetricLearning (default) or MetricLearning; both have the same stages.
 
 Times embedding, build-edges, filtering, gnn and graph segmentation by wrapping each
 stage's function in the version's inference.py with torch.cuda.synchronize() on both
@@ -22,6 +24,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -29,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "DoubleMetricLearning"
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 STAGES = ["embedding", "build-edges", "filtering", "gnn", "graph segmentation"]
 BACKENDS = ["cc_walk", "cc", "cc_bestpred_walk", "cc_junction_removal"]
 
@@ -42,11 +45,9 @@ def worker(
     warmup: int,
     trials: int,
 ):
-    import os
-
     import torch
 
-    model_dir = MODEL_DIR / version
+    model_dir = MODELS_DIR / os.environ["BENCHMARK_MODEL"] / version
     sys.path.insert(0, str(model_dir))
     os.chdir(model_dir)
     import inference as m
@@ -73,7 +74,8 @@ def worker(
 
     m.run_torch_model = run_torch_model_timed
     m.build_edges = timed("build-edges", m.build_edges)
-    m.run_gnn_filter = timed("filtering", m.run_gnn_filter)
+    filter_fn = "run_gnn_filter" if hasattr(m, "run_gnn_filter") else "run_gnn_filter_optimized"
+    setattr(m, filter_fn, timed("filtering", getattr(m, filter_fn)))
     if version == "1":  # cc and walk are two calls
         m.walkutils.get_simple_path = timed("graph segmentation", m.walkutils.get_simple_path)
         m.walkutils.walk_through = timed("graph segmentation", m.walkutils.walk_through)
@@ -83,9 +85,9 @@ def worker(
     kwargs = dict(model_path=".", device="cuda", debug=False, precision="high",
                   auto_cast=False, compiling=False, save_data_for_debug=False,
                   deterministic=deterministic)  # fmt: skip
-    if version == "1":
+    if "use_dpw" in m.create_metric_learning_end2end_rel24.__code__.co_varnames:
         kwargs["use_dpw"] = False
-    else:
+    if version != "1":
         kwargs["segment_backend"] = backend
     inference = m.create_metric_learning_end2end_rel24(**kwargs)
 
@@ -109,6 +111,8 @@ def worker(
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("-i", "--input", required=True, help="node features .pt file")
+    parser.add_argument("-m", "--model", default="DoubleMetricLearning",
+                        choices=["DoubleMetricLearning", "MetricLearning"])  # fmt: skip
     parser.add_argument("-b", "--backends", nargs="+", default=BACKENDS,
                         help="graph_segment backends to run with version 2")  # fmt: skip
     parser.add_argument("-w", "--warmup", type=int, default=2)
@@ -134,7 +138,8 @@ def main():
     for (version, backend), det in [(c, d) for c in configs for d in dets]:
         cmd = [sys.executable, __file__, "-i", input_path, "-w", str(args.warmup),
                "-n", str(args.trials), "--worker", version, backend, det]  # fmt: skip
-        out = subprocess.run(cmd, capture_output=True, text=True)
+        env = {**os.environ, "BENCHMARK_MODEL": args.model}
+        out = subprocess.run(cmd, capture_output=True, text=True, env=env)
         lines = [x for x in out.stdout.splitlines() if x.startswith("RESULT ")]
         if out.returncode or not lines:
             sys.exit(f"v{version} {backend} failed:\n{out.stderr[-3000:]}")
