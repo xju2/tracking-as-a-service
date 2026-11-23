@@ -4,8 +4,71 @@ import importlib
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
-from torch_scatter import scatter_add, scatter_mean
+from torch_scatter import scatter_add, scatter_mean, segment_csr
 from torch_geometric.nn import SAGEConv
+from torch_geometric.nn.aggr import Aggregation
+
+
+# ---------------------------------------------------------------------------------------
+# Deterministic message sums. CUDA scatter-adds use atomics, so the order of the additions,
+# and hence the float rounding, changes from run to run, and the same event can give
+# different tracks. make_deterministic() switches the GNNs to sorting the messages by
+# target and summing each target's messages in that fixed order, at some latency cost.
+# ---------------------------------------------------------------------------------------
+def sort_by_index(index: torch.Tensor, dim_size: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Permutation that sorts index (stable), and CSR pointers of the sorted index."""
+    perm = torch.argsort(index, stable=True)
+    ptr = torch.zeros(dim_size + 1, dtype=torch.long, device=index.device)
+    ptr[1:] = torch.cumsum(torch.bincount(index, minlength=dim_size), 0)
+    return perm, ptr
+
+
+def scatter_sum(
+    src: torch.Tensor,
+    index: torch.Tensor,
+    dim_size: int,
+    order: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+) -> torch.Tensor:
+    """Sum the rows of src [E, F] into [dim_size, F] by index.
+
+    With order = sort_by_index(index, dim_size), the sum is deterministic; without it,
+    it uses a CUDA atomic scatter-add.
+    """
+    if order is not None:
+        perm, ptr = order
+        return segment_csr(src[perm], ptr, reduce="sum")
+    return torch.scatter_add(
+        torch.zeros(src.shape[1], dim_size, device=src.device),
+        1,
+        torch.unsqueeze(index, 0).tile(src.shape[1], 1),
+        src.T,
+    ).T
+
+
+class DeterministicAggregation(Aggregation):
+    """The reduction of a torch_geometric aggregation ("sum", "mean", ...) in a fixed order."""
+
+    def __init__(self, reduce: str):
+        super().__init__()
+        self.reduce_op = reduce
+
+    def forward(self, x, index=None, ptr=None, dim_size=None, dim=-2):
+        if ptr is None:
+            dim_size = int(index.max()) + 1 if dim_size is None else dim_size
+            perm, ptr = sort_by_index(index, dim_size)
+            x = x.index_select(dim, perm)
+        # With ptr given, Aggregation.reduce does a segment reduce instead of a scatter.
+        return self.reduce(x, None, ptr, dim_size, dim, reduce=self.reduce_op)
+
+
+def make_deterministic(model: nn.Module) -> nn.Module:
+    """Make the message sums of every GNN in model deterministic (see above)."""
+    for module in model.modules():
+        if isinstance(module, InteractionGNNParams):
+            module.deterministic = True
+        elif isinstance(module, SAGEConv):
+            module.aggr_module = DeterministicAggregation(module.aggr)
+    return model
 
 
 class InteractionGNNParams:
@@ -32,6 +95,7 @@ class InteractionGNNParams:
         self.params["checkpointing"] = hparams.get("checkpointing", False)
         self.params["concat"] = hparams.get("concat", True)
         self.params["use_scatter_add"] = True if hparams.get("aggr", "sum") == "sum" else False
+        self.deterministic: bool = False  # set by make_deterministic()
         self.n_graph_iters: int = hparams.get("n_graph_iters", 8)
         self.in_out_diff_agg: bool = hparams.get("in_out_diff_agg", True)
         self.ckpting_reentrant: bool = hparams.get("ckpting_reentrant", False)
@@ -224,11 +288,16 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
         input_x = x
         input_e = e
         outputs = []
+        dst_order: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        src_order: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        if self.deterministic:
+            dst_order = sort_by_index(dst, x.shape[0])
+            src_order = sort_by_index(src, x.shape[0])
         for i in range(self.n_graph_iters):
             if self.params["concat"]:
                 x = torch.cat([x, input_x], dim=-1)
                 e = torch.cat([e, input_e], dim=-1)
-            x, e, out = self.recurrent_message_step(x, e, src, dst)
+            x, e, out = self.recurrent_message_step(x, e, src, dst, dst_order, src_order)
             outputs.append(out)
         return outputs[-1].squeeze(-1)
 
@@ -281,23 +350,23 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
         return outputs[-1].squeeze(-1)
 
     def recurrent_message_step(
-        self, x: torch.Tensor, e: torch.Tensor, src: torch.Tensor, dst: torch.Tensor
+        self,
+        x: torch.Tensor,
+        e: torch.Tensor,
+        src: torch.Tensor,
+        dst: torch.Tensor,
+        dst_order: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        src_order: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         edge_inputs = torch.cat([e, x[src], x[dst]], dim=-1)
         e_updated = self.edge_network(edge_inputs)
 
-        dst_index = torch.unsqueeze(dst, 0).tile(e_updated.shape[1], 1)
-        edge_messages_from_src = torch.scatter_add(
-            torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device),
-            1,
-            dst_index,
-            e_updated.T,
-        ).T
+        edge_messages_from_src = scatter_sum(e_updated, dst, x.shape[0], dst_order)
         if not self.params["use_scatter_add"]:
-            # use scatter_mean
-            e_ones = torch.ones(dst.shape[0], device=dst_index.device)
+            # use scatter_mean. Counts are sums of 1.0, exact in any order.
+            e_ones = torch.ones(dst.shape[0], device=dst.device)
             count = torch.scatter_add(
-                torch.zeros(x.shape[0], device=dst_index.device),
+                torch.zeros(x.shape[0], device=dst.device),
                 0,
                 dst,
                 e_ones,
@@ -305,18 +374,12 @@ class RecurrentInteractionGNN2(InteractionGNNParams, nn.Module):
             count[count < 1] = 1
             edge_messages_from_src.div_(count)
 
-        src_index = torch.unsqueeze(src, 0).tile(e_updated.shape[1], 1)
-        edge_messages_from_dst = torch.scatter_add(
-            torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device),
-            1,
-            src_index,
-            e_updated.T,
-        ).T
+        edge_messages_from_dst = scatter_sum(e_updated, src, x.shape[0], src_order)
         if not self.params["use_scatter_add"]:
             # use scatter_mean
-            e_ones = torch.ones(dst.shape[0], device=dst_index.device)
+            e_ones = torch.ones(dst.shape[0], device=dst.device)
             count = torch.scatter_add(
-                torch.zeros(x.shape[0], device=src_index.device),
+                torch.zeros(x.shape[0], device=src.device),
                 0,
                 src,
                 e_ones,
@@ -401,6 +464,11 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
         input_x = x
         input_e = e
         outputs = []
+        dst_order: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        src_order: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        if self.deterministic:
+            dst_order = sort_by_index(dst, x.shape[0])
+            src_order = sort_by_index(src, x.shape[0])
 
         for node_net, edge_net in zip(self.node_network, self.edge_network):
             if self.params["concat"]:
@@ -409,18 +477,12 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
             edge_inputs = torch.cat([e, x[src], x[dst]], dim=-1)
             e_updated = edge_net(edge_inputs)
 
-            dst_index = torch.unsqueeze(dst, 0).tile(e_updated.shape[1], 1)
-            edge_messages_from_src = torch.scatter_add(
-                torch.zeros(e_updated.shape[1], x.shape[0], device=dst_index.device),
-                1,
-                dst_index,
-                e_updated.T,
-            ).T
+            edge_messages_from_src = scatter_sum(e_updated, dst, x.shape[0], dst_order)
             if not self.params["use_scatter_add"]:
-                # use scatter_mean
-                e_ones = torch.ones(dst.shape[0], device=dst_index.device)
+                # use scatter_mean. Counts are sums of 1.0, exact in any order.
+                e_ones = torch.ones(dst.shape[0], device=dst.device)
                 count = torch.scatter_add(
-                    torch.zeros(x.shape[0], device=dst_index.device),
+                    torch.zeros(x.shape[0], device=dst.device),
                     0,
                     dst,
                     e_ones,
@@ -428,18 +490,12 @@ class ChainedInteractionGNN2(InteractionGNNParams, nn.Module):
                 count[count < 1] = 1
                 edge_messages_from_src.div_(count)
 
-            src_index = torch.unsqueeze(src, 0).tile(e_updated.shape[1], 1)
-            edge_messages_from_dst = torch.scatter_add(
-                torch.zeros(e_updated.shape[1], x.shape[0], device=src_index.device),
-                1,
-                src_index,
-                e_updated.T,
-            ).T
+            edge_messages_from_dst = scatter_sum(e_updated, src, x.shape[0], src_order)
             if not self.params["use_scatter_add"]:
                 # use scatter_mean
-                e_ones = torch.ones(dst.shape[0], device=dst_index.device)
+                e_ones = torch.ones(dst.shape[0], device=dst.device)
                 count = torch.scatter_add(
-                    torch.zeros(x.shape[0], device=src_index.device),
+                    torch.zeros(x.shape[0], device=src.device),
                     0,
                     src,
                     e_ones,

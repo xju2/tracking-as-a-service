@@ -68,6 +68,10 @@ class TritonPythonModel:
         segment_cuts = parameters.get(
             "segment_cuts", {"string_value": '{"cc_cut": 0.01, "th_min": 0.1, "th_add": 0.6}'}
         )["string_value"]
+        deterministic = (
+            parameters.get("deterministic", {"string_value": "False"})["string_value"].lower()
+            == "true"
+        )
         config = MetricLearningInferenceConfig(
             model_path=model_path,
             device=self.device,
@@ -77,6 +81,7 @@ class TritonPythonModel:
             segment_cuts=segment_cuts,
             debug=self.debug,
             save_debug_data=False,
+            deterministic=deterministic,
         )
 
         self.inference = MetricLearningInference(config)
