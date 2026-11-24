@@ -23,3 +23,13 @@ cd models/DoubleMetricLearning/2
 python inference.py -i ../all_input_node_features.pt -b cc_bestpred_walk \
   --segment-cuts '{"cc_cut": 0.01, "th_min": 0.3, "th_add": 0.8}'
 ```
+
+## Reproducible results
+By default the filter and GNN sum their messages with CUDA atomic scatter-adds. The order of
+the additions, and hence the float rounding, changes from run to run, so the same event can
+give slightly different tracks. Set the `deterministic` parameter in `config.pbtxt` to `True`
+(or pass `--deterministic` to `inference.py`, in either version) to sum each node's messages
+in a fixed order instead (`make_deterministic` in `interaction_gnn.py`). Then the same input
+always gives the same tracks. `python test_deterministic_sum.py` (in `1/`) checks that these
+sums match the atomic ones. `scripts/benchmark_dml_stages.py -D` measures the latency of both
+modes.

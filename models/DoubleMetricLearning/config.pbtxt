@@ -51,3 +51,10 @@ parameters: {
   key: "segment_cuts",
   value: {string_value: "{\"cc_cut\": 0.01, \"th_min\": 0.1, \"th_add\": 0.6}"}
 }
+
+# Sum GNN messages in a fixed order instead of with CUDA atomics, so the same event always
+# gives the same tracks, at some latency cost. Versions 1 and 2.
+parameters: {
+  key: "deterministic",
+  value: {string_value: "False"}
+}

@@ -15,6 +15,7 @@ from interaction_gnn import (
     ChainedInteractionGNN2,
     GNNFilterJitable,
     RecurrentInteractionGNN2,
+    make_deterministic,
 )
 from torch_geometric.data import Data
 from torch_geometric.transforms import RemoveIsolatedNodes
@@ -73,6 +74,9 @@ class MetricLearningInferenceConfig:
     debug: bool
     use_dpw: bool = False
     save_debug_data: bool = False
+    # Sum GNN messages in a fixed order instead of with CUDA atomics: the same event then
+    # always gives the same tracks, at some latency cost.
+    deterministic: bool = False
     r_max: float = 0.14
     k_max: int = 1000
     filter_cut: float = 0.01
@@ -162,6 +166,10 @@ class MetricLearningInference:
 
         self.gnn_model = new_gnn
         self.gnn_model.to(self.config.device).eval()
+
+        if self.config.deterministic:
+            make_deterministic(self.filter_model)
+            make_deterministic(self.gnn_model)
 
         device = self.config.device
         self.embedding_scale = torch.tensor(config.embedding_node_scale, device=device)
@@ -470,6 +478,7 @@ def create_metric_learning_end2end_rel24(
     compiling: bool,
     use_dpw: bool,
     save_data_for_debug: bool,
+    deterministic: bool = False,
 ):
     config = MetricLearningInferenceConfig(
         model_path=model_path,
@@ -479,6 +488,7 @@ def create_metric_learning_end2end_rel24(
         use_dpw=use_dpw,
         debug=debug,
         save_debug_data=save_data_for_debug,
+        deterministic=deterministic,
         r_max=0.14,
         k_max=1000,
         filter_cut=0.01,
@@ -515,6 +525,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "-s", "--save-data-for-debug", action="store_true", help="Save debugging data"
     )
+    parser.add_argument(
+        "--deterministic", action="store_true", help="Sum GNN messages in a fixed order"
+    )
 
     args = parser.parse_args()
     if not Path(args.model).exists():
@@ -529,6 +542,7 @@ if __name__ == "__main__":
         compiling=args.compiling,
         use_dpw=args.use_dpw,
         save_data_for_debug=args.save_data_for_debug,
+        deterministic=args.deterministic,
     )
     print("start a warm-up run.")
     node_features = torch.load(args.input)

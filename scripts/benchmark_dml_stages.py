@@ -4,6 +4,9 @@ Times embedding, build-edges, filtering, gnn and graph segmentation by wrapping 
 stage's function in the version's inference.py with torch.cuda.synchronize() on both
 sides, so the model code is unchanged. "gap" = total - sum of stages: data movement and
 bookkeeping between stages (e.g. v1's graph construction and per-track output loop).
+"outputs" is the number of distinct track outputs over the runs; 1 means reproducible.
+With --deterministic, every row is followed by the same configuration with the GNN
+message sums in a fixed order (the `deterministic` model parameter).
 
 Each (version, backend) runs in its own process, because both versions use the same module
 names. Run on a GPU compute node, not a login node, e.g. on Perlmutter:
@@ -17,6 +20,7 @@ names. Run on a GPU compute node, not a login node, e.g. on Perlmutter:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -30,7 +34,14 @@ STAGES = ["embedding", "build-edges", "filtering", "gnn", "graph segmentation"]
 BACKENDS = ["cc_walk", "cc", "cc_bestpred_walk", "cc_junction_removal"]
 
 
-def worker(version: str, backend: str | None, input_path: str, warmup: int, trials: int):
+def worker(
+    version: str,
+    backend: str | None,
+    deterministic: bool,
+    input_path: str,
+    warmup: int,
+    trials: int,
+):
     import os
 
     import torch
@@ -70,7 +81,8 @@ def worker(version: str, backend: str | None, input_path: str, warmup: int, tria
         m.segment = timed("graph segmentation", m.segment)
 
     kwargs = dict(model_path=".", device="cuda", debug=False, precision="high",
-                  auto_cast=False, compiling=False, save_data_for_debug=False)  # fmt: skip
+                  auto_cast=False, compiling=False, save_data_for_debug=False,
+                  deterministic=deterministic)  # fmt: skip
     if version == "1":
         kwargs["use_dpw"] = False
     else:
@@ -89,6 +101,7 @@ def worker(version: str, backend: str | None, input_path: str, warmup: int, tria
         torch.cuda.synchronize()
         times["total"] = (time.perf_counter() - start) * 1e3
         times["tracks"] = int(np.sum(track_candidates == -1))
+        times["hash"] = hashlib.sha1(np.ascontiguousarray(track_candidates).tobytes()).hexdigest()
         runs.append(dict(times))
     print("RESULT " + json.dumps(runs))
 
@@ -100,22 +113,27 @@ def main():
                         help="graph_segment backends to run with version 2")  # fmt: skip
     parser.add_argument("-w", "--warmup", type=int, default=2)
     parser.add_argument("-n", "--trials", type=int, default=10)
+    parser.add_argument("-D", "--deterministic", action="store_true",
+                        help="also run each configuration with deterministic GNN sums")  # fmt: skip
     parser.add_argument(
-        "--worker", nargs=2, metavar=("VERSION", "BACKEND"), help=argparse.SUPPRESS
+        "--worker", nargs=3, metavar=("VERSION", "BACKEND", "DET"), help=argparse.SUPPRESS
     )
     args = parser.parse_args()
     input_path = str(Path(args.input).resolve())
 
     if args.worker:
-        version, backend = args.worker
-        worker(version, None if backend == "-" else backend, input_path, args.warmup, args.trials)
+        version, backend, det = args.worker
+        backend = None if backend == "-" else backend
+        worker(version, backend, det == "1", input_path, args.warmup, args.trials)
         return
 
-    print("| version | " + " | ".join(STAGES) + " | sum | gap | total | tracks |")
-    print("|---" * (len(STAGES) + 5) + "|")
-    for version, backend in [("1", "-")] + [("2", b) for b in args.backends]:
+    print("| version | " + " | ".join(STAGES) + " | sum | gap | total | tracks | outputs |")
+    print("|---" * (len(STAGES) + 6) + "|")
+    configs = [("1", "-")] + [("2", b) for b in args.backends]
+    dets = ["0", "1"] if args.deterministic else ["0"]
+    for (version, backend), det in [(c, d) for c in configs for d in dets]:
         cmd = [sys.executable, __file__, "-i", input_path, "-w", str(args.warmup),
-               "-n", str(args.trials), "--worker", version, backend]  # fmt: skip
+               "-n", str(args.trials), "--worker", version, backend, det]  # fmt: skip
         out = subprocess.run(cmd, capture_output=True, text=True)
         lines = [x for x in out.stdout.splitlines() if x.startswith("RESULT ")]
         if out.returncode or not lines:
@@ -124,11 +142,12 @@ def main():
         med = {k: float(np.median([r.get(k, 0.0) for r in runs])) for k in [*STAGES, "total"]}
         stage_sum = sum(med[k] for k in STAGES)
         tracks = sorted({r["tracks"] for r in runs})
-        label = "v1" if version == "1" else f"v2 `{backend}`"
+        label = ("v1" if version == "1" else f"v2 `{backend}`") + (" det" if det == "1" else "")
         print(f"| {label} | " + " | ".join(f"{med[k]:.1f}" for k in STAGES)
               + f" | {stage_sum:.1f} | {med['total'] - stage_sum:.1f}"
               + f" | {med['total']:.1f} ± {np.std([r['total'] for r in runs]):.1f}"
-              + f" | {', '.join(map(str, tracks))} |", flush=True)  # fmt: skip
+              + f" | {', '.join(map(str, tracks))} | {len({r['hash'] for r in runs})} |",
+              flush=True)  # fmt: skip
 
 
 if __name__ == "__main__":
