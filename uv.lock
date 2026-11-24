@@ -451,8 +451,8 @@ source = { git = "https://github.com/xju2/FRNN?rev=9b57ef4a7c194e2f1372591d3ea33
 
 [[package]]
 name = "frnn-cuda"
-version = "1.0.1"
-source = { git = "https://github.com/xju2/libFRNN?rev=b06fc3b8fe0d8c7f985fcd149e6b23c73c240901#b06fc3b8fe0d8c7f985fcd149e6b23c73c240901" }
+version = "3.1.0"
+source = { git = "https://github.com/xju2/libFRNN?tag=v3.1.0#7292a34ccefc10b9a9bf66ec81c82b4ed52483cb" }
 dependencies = [
     { name = "numpy" },
 ]
@@ -1416,7 +1416,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "frnn", git = "https://github.com/xju2/FRNN?rev=9b57ef4a7c194e2f1372591d3ea33ab254295a51" },
-    { name = "frnn-cuda", git = "https://github.com/xju2/libFRNN?rev=b06fc3b8fe0d8c7f985fcd149e6b23c73c240901" },
+    { name = "frnn-cuda", git = "https://github.com/xju2/libFRNN?tag=v3.1.0" },
     { name = "graph-segment", git = "https://github.com/xju2/graph_segment_for_gnn_tracking?rev=8cdb7b97389d9b14ec405905928b58bd6ddf6a8f" },
     { name = "numba", specifier = ">=0.62.1,<0.63" },
     { name = "prefix-sum", git = "https://github.com/asnaylor/prefix_sum?rev=008f3239e3f3e65e48c04796d606c5595f2417bf" },
