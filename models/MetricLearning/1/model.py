@@ -71,6 +71,10 @@ class TritonPythonModel:
             compiling=compiling,
             debug=self.debug,
             save_debug_data=self.save_event,
+            deterministic=parameters.get("deterministic", {"string_value": "False"})[
+                "string_value"
+            ].lower()
+            == "true",
         )
 
         self.inference = MetricLearningInference(config)
