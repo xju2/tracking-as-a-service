@@ -215,7 +215,7 @@ RUN cd /tmp/ \
 
 # libFRNN (`import frnn_cuda`) and graph_segment, used by DoubleMetricLearning version 2.
 # --no-build-isolation lets CMake find the installed torch for the frnn_cuda.torch extension.
-ARG LIBFRNN_REF=b06fc3b8fe0d8c7f985fcd149e6b23c73c240901
+ARG LIBFRNN_REF=v3.1.0
 ARG GRAPH_SEGMENT_REF=8cdb7b97389d9b14ec405905928b58bd6ddf6a8f
 RUN pip3 install scikit-build-core pybind11 \
   && cd /tmp && git clone https://github.com/xju2/libFRNN.git && cd libFRNN \
