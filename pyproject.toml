@@ -28,7 +28,7 @@ dev = ["pre-commit>=4.5.1,<5"]
 [tool.uv.sources]
 frnn = { git = "https://github.com/xju2/FRNN", rev = "9b57ef4a7c194e2f1372591d3ea33ab254295a51" }
 prefix-sum = { git = "https://github.com/asnaylor/prefix_sum", rev = "008f3239e3f3e65e48c04796d606c5595f2417bf" }
-frnn-cuda = { git = "https://github.com/xju2/libFRNN", rev = "b06fc3b8fe0d8c7f985fcd149e6b23c73c240901" }
+frnn-cuda = { git = "https://github.com/xju2/libFRNN", tag = "v3.1.0" }
 graph-segment = { git = "https://github.com/xju2/graph_segment_for_gnn_tracking", rev = "8cdb7b97389d9b14ec405905928b58bd6ddf6a8f" }
 
 # These CUDA extensions import torch at build time; build them against the locked torch.
