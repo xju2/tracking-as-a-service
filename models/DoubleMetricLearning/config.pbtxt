@@ -39,3 +39,15 @@ parameters: {
   key: "use_dpw",
   value: {string_value: "False"}
 }
+
+# Version 2 only: graph_segment backend (cc, cc_walk, cc_bestpred_walk, cc_junction_removal)
+# and its cuts as JSON. Each backend uses only the cuts it knows; see graph_segment's README.
+parameters: {
+  key: "segment_backend",
+  value: {string_value: "cc_walk"}
+}
+
+parameters: {
+  key: "segment_cuts",
+  value: {string_value: "{\"cc_cut\": 0.01, \"th_min\": 0.1, \"th_add\": 0.6}"}
+}

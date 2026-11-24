@@ -450,6 +450,20 @@ version = "0.0.0"
 source = { git = "https://github.com/xju2/FRNN?rev=9b57ef4a7c194e2f1372591d3ea33ab254295a51#9b57ef4a7c194e2f1372591d3ea33ab254295a51" }
 
 [[package]]
+name = "frnn-cuda"
+version = "3.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/9a/94621f020e58310da8a1e6280e58ee87587613ca3257c49e2c024e5106a6/frnn_cuda-3.1.1.tar.gz", hash = "sha256:ef73b48d666d45746bc0dcab8a0eff1cba556e8f7029a231e08662b28315ddf6", size = 183981, upload-time = "2026-11-24T03:25:49.293Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d4/99/19e631c53e3a8398d5f5ac44d9869ab1b6b28d87760cf614a5a9dc258930/frnn_cuda-3.1.1-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:da17ea9d792035006c7762a49ebd0493fe24f92150a636d395b9284ea08a5bf0", size = 3753055, upload-time = "2026-11-24T03:25:42.503Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/0d/d07a3c583af9c4c0e85e0cd50b4827e77900771c96491e7aec23816b7145/frnn_cuda-3.1.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d9f5525d7caab0a41a57144609a0ba1a4bf0cb6171bfe29944c22132b069cb8c", size = 3755671, upload-time = "2026-11-24T03:25:43.747Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/eb/60bd81b7062a304bbba0a044ea933b74c86902af741e7619fe55a8625343/frnn_cuda-3.1.1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cca66c933cb9e42f684fe69f34ea66a560434b45380e03e8f523620b96e35b1d", size = 3755662, upload-time = "2026-11-24T03:25:45.578Z" },
+]
+
+[[package]]
 name = "frozenlist"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -530,6 +544,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/77/cd/9be253869fc42e764
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6c/c0/a98505f18594f1bce828bb159cec0fcf9860562f1a2c85913409fc8f3d9e/fsspec-2026.9.0-py3-none-any.whl", hash = "sha256:8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f", size = 221738, upload-time = "2026-09-18T17:50:41.341Z" },
 ]
+
+[[package]]
+name = "graph-segment"
+version = "0.1.0"
+source = { git = "https://github.com/xju2/graph_segment_for_gnn_tracking?rev=8cdb7b97389d9b14ec405905928b58bd6ddf6a8f#8cdb7b97389d9b14ec405905928b58bd6ddf6a8f" }
 
 [[package]]
 name = "identify"
@@ -1383,6 +1402,8 @@ version = "2.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "frnn" },
+    { name = "frnn-cuda" },
+    { name = "graph-segment" },
     { name = "numba" },
     { name = "prefix-sum" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1401,6 +1422,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "frnn", git = "https://github.com/xju2/FRNN?rev=9b57ef4a7c194e2f1372591d3ea33ab254295a51" },
+    { name = "frnn-cuda", specifier = "==3.1.1" },
+    { name = "graph-segment", git = "https://github.com/xju2/graph_segment_for_gnn_tracking?rev=8cdb7b97389d9b14ec405905928b58bd6ddf6a8f" },
     { name = "numba", specifier = ">=0.62.1,<0.63" },
     { name = "prefix-sum", git = "https://github.com/asnaylor/prefix_sum?rev=008f3239e3f3e65e48c04796d606c5595f2417bf" },
     { name = "scipy", specifier = ">=1.15,<2" },

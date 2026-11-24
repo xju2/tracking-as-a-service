@@ -213,6 +213,16 @@ RUN cd /tmp/ \
 		python setup.py install && \
 	rm -rf /tmp/prefix_sum && rm -rf /tmp/FRNN
 
+# libFRNN (`import frnn_cuda`) and graph_segment, used by the version 2 models.
+# libFRNN's PyPI wheels lack the frnn_cuda.torch extension, which must match the installed torch:
+# build from the sdist (--no-binary) against that torch (--no-build-isolation).
+ARG LIBFRNN_VERSION=3.1.1
+ARG GRAPH_SEGMENT_REF=8cdb7b97389d9b14ec405905928b58bd6ddf6a8f
+RUN pip3 install scikit-build-core pybind11 \
+  && CMAKE_ARGS="-DFRNN_BUILD_TORCH=ON -DCMAKE_CUDA_ARCHITECTURES=80" \
+     pip3 install --no-binary frnn_cuda --no-build-isolation "frnn_cuda==${LIBFRNN_VERSION}" \
+  && pip3 install "git+https://github.com/xju2/graph_segment_for_gnn_tracking.git@${GRAPH_SEGMENT_REF}"
+
 # torchscatter
 # RUN cd /tmp/ && mkdir src \
 # 	&& ${GET} https://github.com/rusty1s/pytorch_scatter/archive/refs/tags/2.1.2.tar.gz | ${UNPACK_TO_SRC} \
