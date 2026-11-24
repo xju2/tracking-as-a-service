@@ -18,7 +18,7 @@ dependencies = [
   "torch-scatter>=2.1.2,<3",
   "frnn",
   "prefix-sum",
-  "frnn-cuda",
+  "frnn-cuda==3.1.1",
   "graph-segment",
 ]
 
@@ -28,7 +28,6 @@ dev = ["pre-commit>=4.5.1,<5"]
 [tool.uv.sources]
 frnn = { git = "https://github.com/xju2/FRNN", rev = "9b57ef4a7c194e2f1372591d3ea33ab254295a51" }
 prefix-sum = { git = "https://github.com/asnaylor/prefix_sum", rev = "008f3239e3f3e65e48c04796d606c5595f2417bf" }
-frnn-cuda = { git = "https://github.com/xju2/libFRNN", tag = "v3.1.0" }
 graph-segment = { git = "https://github.com/xju2/graph_segment_for_gnn_tracking", rev = "8cdb7b97389d9b14ec405905928b58bd6ddf6a8f" }
 
 # These CUDA extensions import torch at build time; build them against the locked torch.
@@ -37,6 +36,10 @@ torch-scatter = [{ requirement = "torch", match-runtime = true }]
 frnn = [{ requirement = "torch", match-runtime = true }]
 prefix-sum = [{ requirement = "torch", match-runtime = true }]
 frnn-cuda = [{ requirement = "torch", match-runtime = true }]
+
+# The PyPI wheels lack frnn_cuda.torch; build from the sdist to get it.
+[tool.uv]
+no-binary-package = ["frnn-cuda"]
 
 [tool.uv.extra-build-variables]
 torch-scatter = { FORCE_CUDA = "1" }
